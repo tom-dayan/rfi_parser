@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getProjectFiles, scanProject } from '../services/api';
-import type { ProjectFileSummary, ContentType } from '../types';
+import { useState, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getProjectFiles, scanProjectStream, indexKnowledgeBase } from '../services/api';
+import type { ProjectFileSummary, ContentType, ScanProgressEvent, ScanResult, IndexResult } from '../types';
 
 interface FileExplorerProps {
   projectId: number;
@@ -9,6 +9,7 @@ interface FileExplorerProps {
 
 const contentTypeLabels: Record<ContentType, string> = {
   rfi: 'RFIs',
+  submittal: 'Submittals',
   specification: 'Specifications',
   drawing: 'Drawings',
   image: 'Images',
@@ -16,11 +17,12 @@ const contentTypeLabels: Record<ContentType, string> = {
 };
 
 const contentTypeColors: Record<ContentType, string> = {
-  rfi: 'bg-blue-100 text-blue-800',
-  specification: 'bg-green-100 text-green-800',
-  drawing: 'bg-purple-100 text-purple-800',
-  image: 'bg-yellow-100 text-yellow-800',
-  other: 'bg-gray-100 text-gray-800',
+  rfi: 'bg-blue-50 text-blue-700',
+  submittal: 'bg-indigo-50 text-indigo-700',
+  specification: 'bg-emerald-50 text-emerald-700',
+  drawing: 'bg-purple-50 text-purple-700',
+  image: 'bg-amber-50 text-amber-700',
+  other: 'bg-slate-100 text-slate-700',
 };
 
 function formatFileSize(bytes: number): string {
@@ -29,8 +31,25 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type SetupPhase = 'idle' | 'scanning' | 'indexing' | 'complete' | 'error';
+
+interface SetupState {
+  phase: SetupPhase;
+  scanProgress: ScanProgressEvent | null;
+  scanResult: ScanResult | null;
+  indexResult: IndexResult | null;
+  error: string | null;
+}
+
 export default function FileExplorer({ projectId }: FileExplorerProps) {
   const [selectedType, setSelectedType] = useState<ContentType | 'all'>('all');
+  const [setupState, setSetupState] = useState<SetupState>({
+    phase: 'idle',
+    scanProgress: null,
+    scanResult: null,
+    indexResult: null,
+    error: null,
+  });
   const queryClient = useQueryClient();
 
   const { data: files = [], isLoading } = useQuery({
@@ -38,13 +57,61 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
     queryFn: () => getProjectFiles(projectId, selectedType === 'all' ? undefined : selectedType),
   });
 
-  const scanMutation = useMutation({
-    mutationFn: () => scanProject(projectId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['files', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
-    },
-  });
+  // Combined scan + index workflow
+  const handleScanAndIndex = useCallback(() => {
+    setSetupState({
+      phase: 'scanning',
+      scanProgress: null,
+      scanResult: null,
+      indexResult: null,
+      error: null,
+    });
+
+    scanProjectStream(projectId, async (event) => {
+      setSetupState((prev) => ({
+        ...prev,
+        scanProgress: event,
+        scanResult: event.result || prev.scanResult,
+        error: event.error || null,
+      }));
+
+      // When scan completes, automatically start indexing
+      if (event.event_type === 'complete') {
+        queryClient.invalidateQueries({ queryKey: ['files', projectId] });
+        queryClient.invalidateQueries({ queryKey: ['projects'] });
+
+        // Start indexing phase
+        setSetupState((prev) => ({
+          ...prev,
+          phase: 'indexing',
+        }));
+
+        try {
+          const indexResult = await indexKnowledgeBase(projectId, true);
+          setSetupState((prev) => ({
+            ...prev,
+            phase: 'complete',
+            indexResult,
+          }));
+          queryClient.invalidateQueries({ queryKey: ['kb-stats', projectId] });
+          queryClient.invalidateQueries({ queryKey: ['projects'] });
+        } catch (err) {
+          setSetupState((prev) => ({
+            ...prev,
+            phase: 'complete', // Still complete, just with index errors
+            error: err instanceof Error ? err.message : 'Indexing failed',
+          }));
+        }
+      } else if (event.event_type === 'error') {
+        setSetupState((prev) => ({
+          ...prev,
+          phase: 'error',
+        }));
+      }
+    });
+  }, [projectId, queryClient]);
+
+  const isProcessing = setupState.phase === 'scanning' || setupState.phase === 'indexing';
 
   // Group files by content type
   const groupedFiles = files.reduce((acc, file) => {
@@ -57,44 +124,135 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
   const typeCounts: Record<string, number> = {
     all: files.length,
     rfi: groupedFiles.rfi?.length || 0,
+    submittal: groupedFiles.submittal?.length || 0,
     specification: groupedFiles.specification?.length || 0,
     drawing: groupedFiles.drawing?.length || 0,
     image: groupedFiles.image?.length || 0,
     other: groupedFiles.other?.length || 0,
   };
 
+  const scanProgress = setupState.scanProgress;
+  const progressPercent = scanProgress?.total_files
+    ? Math.round((scanProgress.current_file_index / scanProgress.total_files) * 100)
+    : 0;
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-900">Project Files</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Project Files</h2>
         <button
-          onClick={() => scanMutation.mutate()}
-          disabled={scanMutation.isPending}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center"
+          onClick={handleScanAndIndex}
+          disabled={isProcessing}
+          className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:bg-slate-300 transition-colors flex items-center shadow-sm"
         >
-          {scanMutation.isPending ? (
+          {isProcessing ? (
             <>
               <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Scanning...
+              {setupState.phase === 'scanning' ? 'Scanning...' : 'Indexing...'}
             </>
           ) : (
             <>
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Rescan Folders
+              Scan & Index
             </>
           )}
         </button>
       </div>
 
-      {scanMutation.isSuccess && (
+      {/* Combined Progress Display */}
+      {isProcessing && (
+        <div className="mb-4 p-4 bg-blue-50 rounded-lg">
+          {/* Step indicators */}
+          <div className="flex items-center mb-3">
+            <div className={`flex items-center ${setupState.phase === 'scanning' ? 'text-blue-700' : 'text-green-600'}`}>
+              {setupState.phase === 'scanning' ? (
+                <svg className="animate-spin h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              )}
+              <span className="text-sm font-medium">1. Scan</span>
+            </div>
+            <div className="mx-3 h-px w-8 bg-gray-300" />
+            <div className={`flex items-center ${setupState.phase === 'indexing' ? 'text-blue-700' : 'text-gray-400'}`}>
+              {setupState.phase === 'indexing' ? (
+                <svg className="animate-spin h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <span className="h-4 w-4 mr-1 rounded-full border-2 border-current" />
+              )}
+              <span className="text-sm font-medium">2. Index</span>
+            </div>
+          </div>
+
+          {/* Scanning progress */}
+          {setupState.phase === 'scanning' && scanProgress && (
+            <>
+              <div className="flex justify-between text-sm text-blue-800 mb-2">
+                <span>{scanProgress.message}</span>
+                <span>{progressPercent}%</span>
+              </div>
+              <div className="w-full bg-blue-200 rounded-full h-3">
+                <div
+                  className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              {scanProgress.current_file && (
+                <p className="text-xs text-blue-600 mt-2 truncate">
+                  {scanProgress.phase === 'rfi' ? 'RFI' : 'Specs'}: {scanProgress.current_file}
+                </p>
+              )}
+              <p className="text-xs text-blue-500 mt-1">
+                {scanProgress.current_file_index} of {scanProgress.total_files} files
+              </p>
+            </>
+          )}
+
+          {/* Indexing progress */}
+          {setupState.phase === 'indexing' && (
+            <div className="text-sm text-blue-800">
+              <p>Building knowledge base from specifications...</p>
+              <p className="text-xs text-blue-600 mt-1">This may take a moment for large documents.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error Message */}
+      {setupState.error && (
+        <div className="mb-4 p-3 bg-red-50 text-red-800 rounded-lg text-sm">
+          {setupState.error}
+        </div>
+      )}
+
+      {/* Success Message */}
+      {setupState.phase === 'complete' && !setupState.error && (
         <div className="mb-4 p-3 bg-green-50 text-green-800 rounded-lg text-sm">
-          Scan complete! Found {scanMutation.data.files_found} files.
-          Added: {scanMutation.data.files_added}, Updated: {scanMutation.data.files_updated}, Removed: {scanMutation.data.files_removed}
+          <div className="flex items-center mb-1">
+            <svg className="h-4 w-4 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+            <span className="font-medium">Setup Complete!</span>
+          </div>
+          {setupState.scanResult && (
+            <p>Found {setupState.scanResult.files_found} files (Added: {setupState.scanResult.files_added}, Updated: {setupState.scanResult.files_updated})</p>
+          )}
+          {setupState.indexResult && (
+            <p>Indexed {setupState.indexResult.files_indexed} specs ({setupState.indexResult.chunks_created} chunks)</p>
+          )}
+          <p className="text-xs mt-2 text-green-600">You can now process RFIs and Submittals from the Results tab.</p>
         </div>
       )}
 
@@ -112,6 +270,13 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
           active={selectedType === 'rfi'}
           onClick={() => setSelectedType('rfi')}
           color="blue"
+        />
+        <FilterButton
+          label="Submittals"
+          count={typeCounts.submittal}
+          active={selectedType === 'submittal'}
+          onClick={() => setSelectedType('submittal')}
+          color="indigo"
         />
         <FilterButton
           label="Specs"
@@ -176,6 +341,7 @@ function FilterButton({
   const colorClasses: Record<string, string> = {
     gray: active ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
     blue: active ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
+    indigo: active ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
     green: active ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100',
     purple: active ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 hover:bg-purple-100',
     yellow: active ? 'bg-yellow-600 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100',

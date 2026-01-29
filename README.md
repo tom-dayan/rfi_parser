@@ -17,7 +17,8 @@ An intelligent web application for architects to upload RFIs (Request for Inform
   - Relevant quotes from specifications
   - Confidence scores
 - **User-Friendly Interface**: Modern, responsive design built with React and TailwindCSS
-- **Flexible AI Backend**: Start with local Ollama, easily switch to Claude API
+- **Flexible AI Backend**: Choose from Google Gemini (recommended), local Ollama, or Claude API
+- **RAG-Powered**: Vector search retrieves relevant specification sections for accurate responses
 
 ## Architecture
 
@@ -30,15 +31,16 @@ An intelligent web application for architects to upload RFIs (Request for Inform
 ┌──────────▼──────────┐
 │  FastAPI Backend    │
 │  • Document Parsing │
+│  • RAG Pipeline     │
 │  • AI Orchestration │
 └──────────┬──────────┘
            │
-    ┌──────┴──────┐
-    │             │
-┌───▼────┐   ┌───▼────┐
-│ Ollama │   │ Claude │
-│(Local) │   │  API   │
-└────────┘   └────────┘
+    ┌──────┼──────┐
+    │      │      │
+┌───▼──┐ ┌─▼──┐ ┌─▼────┐
+│Gemini│ │Olla│ │Claude│
+│(Free)│ │-ma │ │ API  │
+└──────┘ └────┘ └──────┘
 ```
 
 ## Tech Stack
@@ -55,8 +57,12 @@ An intelligent web application for architects to upload RFIs (Request for Inform
 - SQLAlchemy ORM
 - SQLite database (upgradeable to PostgreSQL)
 - Document parsers (PyPDF2, pdfplumber, python-docx)
-- Ollama for local AI processing
-- Anthropic SDK for Claude API support
+- ChromaDB for vector storage (RAG)
+- SentenceTransformers for embeddings
+- **AI Providers**:
+  - Google Gemini (recommended - free tier available)
+  - Ollama for local AI processing
+  - Anthropic Claude API
 
 ## Quick Start
 
@@ -64,19 +70,18 @@ An intelligent web application for architects to upload RFIs (Request for Inform
 
 - Node.js 18+ and npm
 - Python 3.10+
-- [Ollama](https://ollama.ai) installed (for local AI)
+- **One of the following AI providers**:
+  - Google Gemini API key (recommended - free tier: 15 RPM, 1M tokens/day)
+  - [Ollama](https://ollama.ai) installed (for local AI)
+  - Anthropic Claude API key
 
-### 1. Install Ollama (if not already installed)
+### 1. Get a Gemini API Key (Recommended)
 
-```bash
-# macOS/Linux
-curl https://ollama.ai/install.sh | sh
+1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Click "Create API Key"
+3. Copy the key - you'll use it in step 2
 
-# Or download from https://ollama.ai
-
-# Pull the model
-ollama pull llama3.2
-```
+> **Alternative**: If you prefer local AI, install [Ollama](https://ollama.ai) and run `ollama pull llama3.2`
 
 ### 2. Set Up Backend
 
@@ -90,8 +95,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment file
+# Copy environment file and configure
 cp .env.example .env
+
+# Edit .env and set your AI provider:
+# AI_PROVIDER=gemini
+# GEMINI_API_KEY=your-api-key-here
 
 # Run the server
 uvicorn app.main:app --reload
@@ -118,25 +127,37 @@ Frontend will be running at [http://localhost:5173](http://localhost:5173)
 
 ## Usage
 
-1. **Upload Specifications**: Go to the "Upload Documents" tab and upload your specification documents
-2. **Upload RFIs**: Upload your RFI documents in the same tab
-3. **Process RFIs**: Navigate to the "Results Dashboard" and click "Process All RFIs"
-4. **Review Results**: View the analysis results with status, reasons, and specification references
-5. **Filter Results**: Filter by status (Accepted, Rejected, Comment, Referred)
+1. **Create a Project**: Enter a project name and configure your RFI, Submittal, and Specs folder paths
+2. **Scan & Index**: Click "Scan & Index" to discover files and build the knowledge base from your specifications
+3. **Process Documents**: Go to the Results tab and click "Process Documents" to analyze RFIs and Submittals against specs
+4. **Review Results**: View AI responses with specification references and relevance scores
+5. **Filter Results**: Filter by document type (RFI/Submittal) or status
 
-## Switching to Claude API
+## Switching AI Providers
 
-To use Claude API instead of Ollama:
+Update `backend/.env` and restart the backend server. No code changes needed.
 
-1. Get your API key from [https://console.anthropic.com](https://console.anthropic.com)
-2. Update `backend/.env`:
-   ```
-   AI_PROVIDER=claude
-   CLAUDE_API_KEY=your_api_key_here
-   ```
-3. Restart the backend server
+### Google Gemini (Recommended)
+```env
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your-api-key-here
+```
+Get your free API key at [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 
-That's it! No code changes needed.
+### Ollama (Local)
+```env
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+```
+Make sure Ollama is running with `ollama serve` and the model is pulled.
+
+### Claude API
+```env
+AI_PROVIDER=claude
+CLAUDE_API_KEY=your-api-key-here
+```
+Get your API key at [https://console.anthropic.com](https://console.anthropic.com)
 
 ## Project Structure
 
@@ -234,9 +255,9 @@ rm rfi_parser.db
 
 ## Future Enhancements
 
-- [ ] Batch processing with progress tracking
-- [ ] Advanced specification indexing and search
-- [ ] Multi-project support
+- [x] Batch processing with progress tracking
+- [x] Advanced specification indexing and search (RAG with vector embeddings)
+- [x] Multi-project support
 - [ ] User authentication and permissions
 - [ ] Audit trail for decisions
 - [ ] Export to various formats (PDF reports, Excel)

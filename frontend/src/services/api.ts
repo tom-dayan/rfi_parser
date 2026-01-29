@@ -6,10 +6,14 @@ import type {
   ProjectFileSummary,
   ProjectFile,
   ScanResult,
+  ScanProgressEvent,
   FolderValidation,
-  RFIResultWithFile,
+  ProcessingResultWithFile,
   ProcessRequest,
   ProcessResponse,
+  KnowledgeBaseStats,
+  IndexResult,
+  DocumentType,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -55,6 +59,47 @@ export const scanProject = async (projectId: number, parseContent: boolean = tru
   return response.data;
 };
 
+// Streaming scan with progress updates
+export const scanProjectStream = (
+  projectId: number,
+  onProgress: (event: ScanProgressEvent) => void,
+  parseContent: boolean = true
+): { cancel: () => void } => {
+  const url = `${API_BASE_URL}/api/projects/${projectId}/scan-stream?parse_content=${parseContent}`;
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data: ScanProgressEvent = JSON.parse(event.data);
+      onProgress(data);
+
+      // Close connection when complete or error
+      if (data.event_type === 'complete' || data.event_type === 'error') {
+        eventSource.close();
+      }
+    } catch (e) {
+      console.error('Failed to parse SSE event:', e);
+    }
+  };
+
+  eventSource.onerror = () => {
+    eventSource.close();
+    onProgress({
+      event_type: 'error',
+      current_file_index: 0,
+      total_files: 0,
+      error: 'Connection lost. Please try again.',
+      message: 'Connection lost'
+    });
+  };
+
+  return {
+    cancel: () => {
+      eventSource.close();
+    }
+  };
+};
+
 export const getProjectFiles = async (
   projectId: number,
   contentType?: string
@@ -92,8 +137,32 @@ export const reparseFile = async (fileId: number): Promise<{
   return response.data;
 };
 
+// Knowledge Base API
+export const indexKnowledgeBase = async (
+  projectId: number,
+  force: boolean = false
+): Promise<IndexResult> => {
+  const response = await api.post<IndexResult>(
+    `/api/projects/${projectId}/index`,
+    null,
+    { params: { force } }
+  );
+  return response.data;
+};
+
+export const getKnowledgeBaseStats = async (projectId: number): Promise<KnowledgeBaseStats> => {
+  const response = await api.get<KnowledgeBaseStats>(
+    `/api/projects/${projectId}/knowledge-base`
+  );
+  return response.data;
+};
+
+export const clearKnowledgeBase = async (projectId: number): Promise<void> => {
+  await api.delete(`/api/projects/${projectId}/knowledge-base`);
+};
+
 // Processing API
-export const processProjectRFIs = async (
+export const processDocuments = async (
   projectId: number,
   request: ProcessRequest = {}
 ): Promise<ProcessResponse> => {
@@ -106,11 +175,16 @@ export const processProjectRFIs = async (
 
 export const getProjectResults = async (
   projectId: number,
+  documentType?: DocumentType,
   status?: string
-): Promise<RFIResultWithFile[]> => {
-  const response = await api.get<RFIResultWithFile[]>(
+): Promise<ProcessingResultWithFile[]> => {
+  const params: Record<string, string> = {};
+  if (documentType) params.document_type = documentType;
+  if (status) params.status = status;
+
+  const response = await api.get<ProcessingResultWithFile[]>(
     `/api/projects/${projectId}/results`,
-    { params: status ? { status } : undefined }
+    { params: Object.keys(params).length > 0 ? params : undefined }
   );
   return response.data;
 };
@@ -119,12 +193,45 @@ export const deleteResult = async (resultId: number): Promise<void> => {
   await api.delete(`/api/results/${resultId}`);
 };
 
+export const updateResult = async (
+  resultId: number,
+  data: { response_text?: string; status?: string }
+): Promise<ProcessingResultWithFile> => {
+  const response = await api.patch<ProcessingResultWithFile>(
+    `/api/results/${resultId}`,
+    data
+  );
+  return response.data;
+};
+
 // Utility API
 export const validateFolder = async (path: string): Promise<FolderValidation> => {
   const response = await api.post<FolderValidation>(
     '/api/projects/validate-folder',
     null,
     { params: { path } }
+  );
+  return response.data;
+};
+
+// Directory browser
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  has_children: boolean;
+  access_denied?: boolean;
+}
+
+export interface BrowseResult {
+  current_path: string;
+  parent_path: string | null;
+  directories: DirectoryEntry[];
+}
+
+export const browseDirectory = async (path?: string): Promise<BrowseResult> => {
+  const response = await api.get<BrowseResult>(
+    '/api/files/browse',
+    { params: path ? { path } : undefined }
   );
   return response.data;
 };

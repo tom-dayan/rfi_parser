@@ -52,3 +52,6 @@ logs/
 # Coverage
 .coverage
 htmlcov/
+
+# Docker data
+data/

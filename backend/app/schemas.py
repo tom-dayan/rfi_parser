@@ -3,6 +3,18 @@ from datetime import datetime
 from typing import Optional, Literal
 
 
+# Enums for document types and statuses
+DocumentType = Literal['rfi', 'submittal']
+ContentType = Literal['rfi', 'submittal', 'specification', 'drawing', 'image', 'other']
+SubmittalStatus = Literal[
+    'no_exceptions',
+    'approved_as_noted',
+    'revise_and_resubmit',
+    'rejected',
+    'see_comments'
+]
+
+
 # Project schemas
 class ProjectCreate(BaseModel):
     name: str
@@ -23,6 +35,9 @@ class Project(BaseModel):
     specs_folder_path: str
     created_date: datetime
     last_scanned: Optional[datetime] = None
+    kb_indexed: bool = False
+    kb_last_indexed: Optional[datetime] = None
+    kb_document_count: int = 0
 
     class Config:
         from_attributes = True
@@ -32,6 +47,7 @@ class ProjectWithStats(Project):
     """Project with file counts"""
     total_files: int = 0
     rfi_count: int = 0
+    submittal_count: int = 0
     spec_count: int = 0
     drawing_count: int = 0
     result_count: int = 0
@@ -44,7 +60,7 @@ class ProjectFileBase(BaseModel):
     file_type: str
     file_size: int
     modified_date: datetime
-    content_type: Literal['rfi', 'specification', 'drawing', 'image', 'other']
+    content_type: ContentType
 
 
 class ProjectFile(ProjectFileBase):
@@ -53,6 +69,8 @@ class ProjectFile(ProjectFileBase):
     last_indexed: Optional[datetime] = None
     content_text: Optional[str] = None
     file_metadata: Optional[dict] = None
+    kb_indexed: bool = False
+    kb_chunk_count: int = 0
 
     class Config:
         from_attributes = True
@@ -66,6 +84,7 @@ class ProjectFileSummary(BaseModel):
     file_size: int
     content_type: str
     has_content: bool = False
+    kb_indexed: bool = False
 
     class Config:
         from_attributes = True
@@ -80,54 +99,74 @@ class ScanResult(BaseModel):
     files_removed: int
 
 
-# RFI Result schemas
+# Knowledge base schemas
+class KnowledgeBaseStats(BaseModel):
+    project_id: int
+    indexed: bool
+    document_count: int
+    last_indexed: Optional[datetime] = None
+    embedding_model: Optional[str] = None
+
+
+class IndexResult(BaseModel):
+    project_id: int
+    files_indexed: int
+    chunks_created: int
+    errors: list[str] = []
+
+
+# Specification reference in results
 class SpecReference(BaseModel):
-    file_id: int
-    filename: str
+    source_file_id: int
+    source_filename: str
     section: Optional[str] = None
-    quote: Optional[str] = None
+    text: str
+    score: float
 
 
-class RFIResultCreate(BaseModel):
-    rfi_file_id: int
-    status: Literal['accepted', 'rejected', 'comment', 'refer_to_consultant']
+# Processing Result schemas
+class ProcessingResultCreate(BaseModel):
+    source_file_id: int
+    document_type: DocumentType
+    response_text: Optional[str] = None
+    status: Optional[SubmittalStatus] = None  # Only for submittals
     consultant_type: Optional[str] = None
-    reason: Optional[str] = None
     confidence: float = 0.0
-    referenced_file_ids: Optional[list[int]] = None
-    spec_references: Optional[list[dict]] = None
+    spec_references: Optional[list[SpecReference]] = None
 
 
-class RFIResult(BaseModel):
+class ProcessingResult(BaseModel):
     id: int
     project_id: int
-    rfi_file_id: int
-    status: Literal['accepted', 'rejected', 'comment', 'refer_to_consultant']
+    source_file_id: int
+    document_type: DocumentType
+    response_text: Optional[str] = None
+    status: Optional[SubmittalStatus] = None  # Only for submittals
     consultant_type: Optional[str] = None
-    reason: Optional[str] = None
     confidence: float
     processed_date: datetime
-    referenced_file_ids: Optional[list[int]] = None
     spec_references: Optional[list[dict]] = None
 
     class Config:
         from_attributes = True
 
 
-class RFIResultWithFile(RFIResult):
-    """RFI Result with the associated RFI file info"""
-    rfi_file: ProjectFileSummary
+class ProcessingResultWithFile(ProcessingResult):
+    """Processing Result with the associated source file info"""
+    source_file: ProjectFileSummary
 
 
-# Processing schemas
+# Processing request schemas
 class ProcessRequest(BaseModel):
-    rfi_file_ids: Optional[list[int]] = None  # Process specific RFIs, or all if None
+    """Request to process documents"""
+    file_ids: Optional[list[int]] = None  # Process specific files, or all if None
+    document_type: Optional[DocumentType] = None  # Filter by type
 
 
 class ProcessResponse(BaseModel):
     message: str
     results_count: int
-    results: list[RFIResult]
+    results: list[ProcessingResult]
 
 
 # Folder validation
@@ -137,4 +176,36 @@ class FolderValidation(BaseModel):
     is_directory: bool
     readable: bool
     file_count: int = 0
+    error: Optional[str] = None
+
+
+# AI Response schemas (for structured AI output)
+class RFIResponse(BaseModel):
+    """AI response for an RFI (informational)"""
+    response_text: str
+    spec_references: list[SpecReference]
+    consultant_type: Optional[str] = None
+    confidence: float
+
+
+class SubmittalResponse(BaseModel):
+    """AI response for a Submittal (review with status)"""
+    response_text: str
+    status: SubmittalStatus
+    spec_references: list[SpecReference]
+    consultant_type: Optional[str] = None
+    confidence: float
+
+
+# Scan progress event schemas (for SSE streaming)
+class ScanProgressEvent(BaseModel):
+    """Progress event during folder scan"""
+    event_type: Literal['start', 'scanning', 'parsing', 'complete', 'error']
+    current_file: Optional[str] = None
+    current_file_index: int = 0
+    total_files: int = 0
+    phase: Optional[str] = None  # 'rfi' or 'specs'
+    message: Optional[str] = None
+    # Final result (only on 'complete')
+    result: Optional[ScanResult] = None
     error: Optional[str] = None

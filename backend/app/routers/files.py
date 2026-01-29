@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from pathlib import Path
+from typing import Optional
 import os
 
 from ..database import get_db
@@ -8,6 +10,65 @@ from ..models import ProjectFile
 from ..schemas import ProjectFile as ProjectFileSchema
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+
+
+@router.get("/browse")
+def browse_directory(path: Optional[str] = Query(default=None)):
+    """
+    Browse directories on the server for folder picker.
+    Returns list of subdirectories at the given path.
+    """
+    # Default to user's home directory
+    if not path:
+        path = str(Path.home())
+    
+    try:
+        target_path = Path(path).resolve()
+        
+        # Ensure path exists and is a directory
+        if not target_path.exists():
+            raise HTTPException(status_code=404, detail="Path does not exist")
+        if not target_path.is_dir():
+            raise HTTPException(status_code=400, detail="Path is not a directory")
+        
+        # Get parent directory
+        parent = str(target_path.parent) if target_path.parent != target_path else None
+        
+        # List directories only (not files)
+        directories = []
+        try:
+            for item in sorted(target_path.iterdir()):
+                if item.is_dir() and not item.name.startswith('.'):
+                    try:
+                        # Check if we can read the directory
+                        list(item.iterdir())
+                        directories.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "has_children": any(
+                                child.is_dir() and not child.name.startswith('.')
+                                for child in item.iterdir()
+                            ) if os.access(item, os.R_OK) else False
+                        })
+                    except PermissionError:
+                        directories.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "has_children": False,
+                            "access_denied": True
+                        })
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Cannot read directory")
+        
+        return {
+            "current_path": str(target_path),
+            "parent_path": parent,
+            "directories": directories
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{file_id}", response_model=ProjectFileSchema)

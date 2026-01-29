@@ -132,24 +132,32 @@ class FileScanner:
         folder_type: str  # 'rfi' or 'specs'
     ) -> str:
         """
-        Classify what type of content a file represents
+        Classify what type of content a file represents.
+
+        For RFI folder, documents are classified as 'rfi' or 'submittal' based on filename.
+        Files containing 'submittal' in name are classified as submittals.
 
         Args:
             file_path: Path to the file
             folder_type: Whether file is from 'rfi' or 'specs' folder
 
         Returns:
-            Content type: 'rfi', 'specification', 'drawing', 'image', 'other'
+            Content type: 'rfi', 'submittal', 'specification', 'drawing', 'image', 'other'
         """
-        extension = Path(file_path).suffix.lower().lstrip('.')
+        path = Path(file_path)
+        extension = path.suffix.lower().lstrip('.')
+        filename_lower = path.name.lower()
         category = FILE_TYPE_CATEGORIES.get(extension, 'other')
 
-        # Files in RFI folder are RFIs (documents)
+        # Files in RFI folder (which may contain both RFIs and Submittals)
         if folder_type == 'rfi':
             if category == 'document':
+                # Check filename for submittal indicators
+                if 'submittal' in filename_lower or 'sub-' in filename_lower:
+                    return 'submittal'
                 return 'rfi'
             elif category in ('drawing', 'image'):
-                return 'drawing'  # Supporting drawings for RFI
+                return 'drawing'
             else:
                 return 'other'
 

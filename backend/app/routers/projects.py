@@ -1,15 +1,19 @@
 import os
+import json
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Generator
 
 from ..database import get_db
-from ..models import Project, ProjectFile, RFIResult
+from ..models import Project, ProjectFile, ProcessingResult
 from ..schemas import (
     ProjectCreate, ProjectUpdate, Project as ProjectSchema,
-    ProjectWithStats, ProjectFileSummary, ScanResult, FolderValidation
+    ProjectWithStats, ProjectFileSummary, ScanResult, FolderValidation,
+    ScanProgressEvent
 )
 from ..services.file_scanner import FileScanner
 from ..services.parsers import get_parser_registry
@@ -53,12 +57,13 @@ def list_projects(db: Session = Depends(get_db)):
     for project in projects:
         # Count files by type
         files = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()
-        results_count = db.query(RFIResult).filter(RFIResult.project_id == project.id).count()
+        results_count = db.query(ProcessingResult).filter(ProcessingResult.project_id == project.id).count()
 
         result.append(ProjectWithStats(
             **ProjectSchema.model_validate(project).model_dump(),
             total_files=len(files),
             rfi_count=sum(1 for f in files if f.content_type == 'rfi'),
+            submittal_count=sum(1 for f in files if f.content_type == 'submittal'),
             spec_count=sum(1 for f in files if f.content_type == 'specification'),
             drawing_count=sum(1 for f in files if f.content_type == 'drawing'),
             result_count=results_count
@@ -75,12 +80,13 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
 
     files = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()
-    results_count = db.query(RFIResult).filter(RFIResult.project_id == project.id).count()
+    results_count = db.query(ProcessingResult).filter(ProcessingResult.project_id == project.id).count()
 
     return ProjectWithStats(
         **ProjectSchema.model_validate(project).model_dump(),
         total_files=len(files),
         rfi_count=sum(1 for f in files if f.content_type == 'rfi'),
+        submittal_count=sum(1 for f in files if f.content_type == 'submittal'),
         spec_count=sum(1 for f in files if f.content_type == 'specification'),
         drawing_count=sum(1 for f in files if f.content_type == 'drawing'),
         result_count=results_count
@@ -194,6 +200,148 @@ def scan_project(project_id: int, parse_content: bool = True, db: Session = Depe
     )
 
 
+@router.get("/{project_id}/scan-stream")
+def scan_project_stream(project_id: int, parse_content: bool = True, db: Session = Depends(get_db)):
+    """Scan project folders with SSE progress updates"""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Eagerly load all data needed before the generator starts
+    # (since the session will be closed when the generator runs)
+    rfi_folder_path = project.rfi_folder_path
+    specs_folder_path = project.specs_folder_path
+    
+    # Load existing files with their data
+    existing_files_data = {
+        f.file_path: {
+            'id': f.id,
+            'modified_date': f.modified_date
+        }
+        for f in project.files
+    }
+
+    def generate_events() -> Generator[str, None, None]:
+        # Import here to get a fresh session for the generator
+        from ..database import SessionLocal
+        
+        gen_db = SessionLocal()
+        files_found = 0
+        files_added = 0
+        files_updated = 0
+        files_removed = 0
+
+        try:
+            found_paths = set()
+
+            # Send start event
+            start_event = ScanProgressEvent(
+                event_type='start',
+                message='Starting folder scan...'
+            )
+            yield f"data: {start_event.model_dump_json()}\n\n"
+
+            # Scan RFI folder - first just discover files
+            yield f"data: {ScanProgressEvent(event_type='scanning', phase='rfi', message='Scanning RFI folder...').model_dump_json()}\n\n"
+            rfi_files = file_scanner.scan_folder(rfi_folder_path)
+
+            # Scan specs folder - discover files
+            yield f"data: {ScanProgressEvent(event_type='scanning', phase='specs', message='Scanning specs folder...').model_dump_json()}\n\n"
+            spec_files = file_scanner.scan_folder(specs_folder_path)
+
+            # Combine all files to process
+            all_files = [(f, 'rfi') for f in rfi_files] + [(f, 'specs') for f in spec_files]
+            total_files = len(all_files)
+
+            yield f"data: {ScanProgressEvent(event_type='scanning', total_files=total_files, message=f'Found {total_files} files to process').model_dump_json()}\n\n"
+
+            # Process each file with progress updates
+            for idx, (scanned, folder_type) in enumerate(all_files):
+                files_found += 1
+                found_paths.add(scanned.file_path)
+                content_type = file_scanner.classify_content_type(scanned.file_path, folder_type)
+
+                # Send progress event
+                progress_event = ScanProgressEvent(
+                    event_type='parsing',
+                    current_file=scanned.filename,
+                    current_file_index=idx + 1,
+                    total_files=total_files,
+                    phase=folder_type,
+                    message=f'Processing {scanned.filename}'
+                )
+                yield f"data: {progress_event.model_dump_json()}\n\n"
+
+                if scanned.file_path in existing_files_data:
+                    # Update if modified
+                    existing_data = existing_files_data[scanned.file_path]
+                    if existing_data['modified_date'] < scanned.modified_date:
+                        existing_file = gen_db.query(ProjectFile).filter(
+                            ProjectFile.id == existing_data['id']
+                        ).first()
+                        if existing_file:
+                            _update_file(existing_file, scanned, content_type, parse_content, gen_db)
+                            files_updated += 1
+                else:
+                    # Add new file
+                    _add_file(project_id, scanned, content_type, parse_content, gen_db)
+                    files_added += 1
+
+            # Remove files that no longer exist
+            for path, existing_data in existing_files_data.items():
+                if path not in found_paths:
+                    existing_file = gen_db.query(ProjectFile).filter(
+                        ProjectFile.id == existing_data['id']
+                    ).first()
+                    if existing_file:
+                        gen_db.delete(existing_file)
+                        files_removed += 1
+
+            # Update last scanned
+            gen_project = gen_db.query(Project).filter(Project.id == project_id).first()
+            if gen_project:
+                gen_project.last_scanned = datetime.utcnow()
+            gen_db.commit()
+
+            # Send complete event
+            result = ScanResult(
+                project_id=project_id,
+                files_found=files_found,
+                files_added=files_added,
+                files_updated=files_updated,
+                files_removed=files_removed
+            )
+            complete_event = ScanProgressEvent(
+                event_type='complete',
+                current_file_index=total_files,
+                total_files=total_files,
+                message='Scan complete!',
+                result=result
+            )
+            yield f"data: {complete_event.model_dump_json()}\n\n"
+
+        except Exception as e:
+            error_event = ScanProgressEvent(
+                event_type='error',
+                error=str(e),
+                message=f'Scan failed: {str(e)}'
+            )
+            yield f"data: {error_event.model_dump_json()}\n\n"
+            gen_db.rollback()
+        finally:
+            gen_db.close()
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
 @router.get("/{project_id}/files", response_model=list[ProjectFileSummary])
 def list_project_files(
     project_id: int,
@@ -217,7 +365,8 @@ def list_project_files(
             file_type=f.file_type,
             file_size=f.file_size,
             content_type=f.content_type,
-            has_content=bool(f.content_text)
+            has_content=bool(f.content_text),
+            kb_indexed=f.kb_indexed
         )
         for f in files
     ]

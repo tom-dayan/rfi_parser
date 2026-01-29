@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createProject, validateFolder } from '../services/api';
 import type { ProjectCreate, FolderValidation } from '../types';
+import FolderBrowser from './FolderBrowser';
 
 interface FolderConfigProps {
   onProjectCreated?: (projectId: number) => void;
@@ -13,6 +14,7 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
   const [specsPath, setSpecsPath] = useState('');
   const [rfiValidation, setRfiValidation] = useState<FolderValidation | null>(null);
   const [specsValidation, setSpecsValidation] = useState<FolderValidation | null>(null);
+  const [browsingFor, setBrowsingFor] = useState<'rfi' | 'specs' | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -82,17 +84,16 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
     specsValidation?.readable;
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">Create New Project</h2>
-      <p className="text-sm text-gray-600 mb-6">
-        Configure the folder paths for your RFIs and specifications. The app will scan these
-        folders to find and index all relevant files.
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <h2 className="text-lg font-semibold text-slate-900 mb-2">Create New Project</h2>
+      <p className="text-sm text-slate-500 mb-6">
+        Configure the folder paths for your RFIs, Submittals, and Specifications.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Project Name */}
         <div>
-          <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-1.5">
             Project Name
           </label>
           <input
@@ -101,14 +102,14 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g., Building A Renovation"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 placeholder:text-slate-400"
           />
         </div>
 
-        {/* RFI Folder */}
+        {/* RFI/Submittal Folder */}
         <div>
-          <label htmlFor="rfiPath" className="block text-sm font-medium text-gray-700 mb-1">
-            RFI Folder Path
+          <label htmlFor="rfiPath" className="block text-sm font-medium text-slate-700 mb-1.5">
+            RFI/Submittal Folder Path
           </label>
           <div className="flex gap-2">
             <input
@@ -119,9 +120,19 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
                 setRfiPath(e.target.value);
                 setRfiValidation(null);
               }}
-              placeholder="/path/to/rfis"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="/path/to/rfis-and-submittals"
+              className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 placeholder:text-slate-400"
             />
+            <button
+              type="button"
+              onClick={() => setBrowsingFor('rfi')}
+              className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
+              title="Browse folders"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={validateRfiFolder}
@@ -137,7 +148,7 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
 
         {/* Specs Folder */}
         <div>
-          <label htmlFor="specsPath" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="specsPath" className="block text-sm font-medium text-slate-700 mb-1.5">
             Specifications Folder Path
           </label>
           <div className="flex gap-2">
@@ -150,8 +161,18 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
                 setSpecsValidation(null);
               }}
               placeholder="/path/to/specs"
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 placeholder:text-slate-400"
             />
+            <button
+              type="button"
+              onClick={() => setBrowsingFor('specs')}
+              className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
+              title="Browse folders"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={validateSpecsFolder}
@@ -169,17 +190,34 @@ export default function FolderConfig({ onProjectCreated }: FolderConfigProps) {
         <button
           type="submit"
           disabled={!isValid || createMutation.isPending}
-          className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
           {createMutation.isPending ? 'Creating Project...' : 'Create Project'}
         </button>
 
         {createMutation.isError && (
-          <div className="p-3 bg-red-50 text-red-800 rounded-lg text-sm">
+          <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200">
             Failed to create project. Please check the folder paths and try again.
           </div>
         )}
       </form>
+
+      {/* Folder Browser Modal */}
+      <FolderBrowser
+        isOpen={browsingFor !== null}
+        onClose={() => setBrowsingFor(null)}
+        onSelect={(path) => {
+          if (browsingFor === 'rfi') {
+            setRfiPath(path);
+            setRfiValidation(null);
+          } else if (browsingFor === 'specs') {
+            setSpecsPath(path);
+            setSpecsValidation(null);
+          }
+          setBrowsingFor(null);
+        }}
+        initialPath={browsingFor === 'rfi' ? rfiPath : specsPath}
+      />
     </div>
   );
 }

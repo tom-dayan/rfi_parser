@@ -1,11 +1,14 @@
+"""Claude API AI service implementation."""
 import json
-from typing import Optional
+import logging
 import anthropic
-from .base import AIService, RFIAnalysis, SpecSection
+from .base import AIService, DocumentResponse, DocumentType, RFIAnalysis, SpecSection
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeService(AIService):
-    """Claude API implementation of AI service with vision support"""
+    """Claude API implementation of AI service with vision support."""
 
     def __init__(
         self,
@@ -18,27 +21,33 @@ class ClaudeService(AIService):
         self.enable_vision = enable_vision
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    async def analyze_rfi(
+    async def process_document(
         self,
-        rfi_content: str,
-        specifications: list[SpecSection]
-    ) -> RFIAnalysis:
+        document_content: str,
+        document_type: DocumentType,
+        spec_context: list[dict]
+    ) -> DocumentResponse:
         """
-        Analyze RFI using Claude API
+        Process a document (RFI or Submittal) using Claude API.
 
         Args:
-            rfi_content: The full text content of the RFI
-            specifications: List of relevant specification sections
+            document_content: The text content of the document
+            document_type: Either "rfi" or "submittal"
+            spec_context: List of relevant spec sections from RAG retrieval
 
         Returns:
-            RFIAnalysis with status, reason, and references
+            DocumentResponse with response text and status (for submittals)
         """
-        prompt = self._build_prompt(rfi_content, specifications)
+        # Build appropriate prompt based on document type
+        if document_type == "rfi":
+            prompt = self._build_rfi_prompt(document_content, spec_context)
+        else:
+            prompt = self._build_submittal_prompt(document_content, spec_context)
 
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=2048,
                 messages=[
                     {
                         "role": "user",
@@ -51,33 +60,125 @@ class ClaudeService(AIService):
             response_text = message.content[0].text
 
             # Parse JSON response
-            analysis_data = self._parse_response(response_text)
+            data = self._parse_document_response(response_text, document_type)
 
-            return RFIAnalysis(**analysis_data)
+            return DocumentResponse(
+                response_text=data.get("response_text", ""),
+                status=data.get("status") if document_type == "submittal" else None,
+                consultant_type=data.get("consultant_type"),
+                confidence=float(data.get("confidence", 0.5))
+            )
 
         except anthropic.APIError as e:
-            print(f"Claude API error: {e}")
-            return RFIAnalysis(
-                status="comment",
-                reason=f"Claude API error: {str(e)}. Please check your API key and try again.",
+            logger.error(f"Claude API error: {e}")
+            return DocumentResponse(
+                response_text=f"Claude API error: {str(e)}. Please check your API key and try again.",
+                status="see_comments" if document_type == "submittal" else None,
                 confidence=0.0
             )
         except Exception as e:
-            print(f"Claude analysis failed: {e}")
-            return RFIAnalysis(
-                status="comment",
-                reason=f"AI analysis failed: {str(e)}. Please review manually.",
+            logger.error(f"Claude processing failed: {e}")
+            return DocumentResponse(
+                response_text=f"AI processing failed: {str(e)}. Please review manually.",
+                status="see_comments" if document_type == "submittal" else None,
                 confidence=0.0
             )
+
+    def _parse_document_response(self, response_text: str, document_type: DocumentType) -> dict:
+        """Parse AI response for document processing."""
+        try:
+            # Handle case where response might have markdown code blocks
+            if "```json" in response_text:
+                start = response_text.index("```json") + 7
+                end = response_text.index("```", start)
+                response_text = response_text[start:end].strip()
+            elif "```" in response_text:
+                start = response_text.index("```") + 3
+                end = response_text.index("```", start)
+                response_text = response_text[start:end].strip()
+
+            data = json.loads(response_text)
+
+            result = {
+                "response_text": data.get("response_text", ""),
+                "consultant_type": data.get("consultant_type"),
+                "confidence": float(data.get("confidence", 0.5))
+            }
+
+            if document_type == "submittal":
+                status = data.get("status", "see_comments")
+                valid_statuses = ["no_exceptions", "approved_as_noted", "revise_and_resubmit", "rejected", "see_comments"]
+                if status not in valid_statuses:
+                    status = "see_comments"
+                result["status"] = status
+
+            return result
+
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Failed to parse JSON response, extracting from text")
+            return self._extract_from_text_document(response_text, document_type)
+
+    def _extract_from_text_document(self, text: str, document_type: DocumentType) -> dict:
+        """Fallback: Extract data from unstructured text for document processing."""
+        text_lower = text.lower()
+
+        result = {
+            "response_text": text[:2000] if len(text) > 2000 else text,
+            "consultant_type": None,
+            "confidence": 0.4
+        }
+
+        # Try to detect consultant type
+        for keyword in ["structural", "electrical", "mechanical", "plumbing", "hvac", "civil", "fire"]:
+            if keyword in text_lower:
+                result["consultant_type"] = keyword
+                break
+
+        if document_type == "submittal":
+            status = "see_comments"
+            if "no exception" in text_lower or ("approved" in text_lower and "noted" not in text_lower):
+                status = "no_exceptions"
+            elif "approved as noted" in text_lower:
+                status = "approved_as_noted"
+            elif "revise" in text_lower or "resubmit" in text_lower:
+                status = "revise_and_resubmit"
+            elif "reject" in text_lower:
+                status = "rejected"
+            result["status"] = status
+
+        return result
+
+    # Keep legacy method for backwards compatibility
+    async def analyze_rfi(
+        self,
+        rfi_content: str,
+        specifications: list[SpecSection]
+    ) -> RFIAnalysis:
+        """Legacy method - use process_document instead."""
+        spec_context = [
+            {"text": s.content, "source": s.title, "section": s.title, "score": 1.0}
+            for s in specifications
+        ]
+        response = await self.process_document(
+            document_content=rfi_content,
+            document_type="rfi",
+            spec_context=spec_context
+        )
+        return RFIAnalysis(
+            status="comment",
+            reason=response.response_text,
+            consultant_type=response.consultant_type,
+            confidence=response.confidence
+        )
 
     async def analyze_rfi_with_images(
         self,
         rfi_content: str,
         specifications: list[SpecSection],
-        images: list[tuple[bytes, str]]  # List of (image_bytes, media_type)
+        images: list[tuple[bytes, str]]
     ) -> RFIAnalysis:
         """
-        Analyze RFI with image support (for drawings)
+        Analyze RFI with image support (for drawings).
 
         Args:
             rfi_content: The full text content of the RFI
@@ -90,7 +191,21 @@ class ClaudeService(AIService):
         if not self.enable_vision or not images:
             return await self.analyze_rfi(rfi_content, specifications)
 
-        prompt = self._build_prompt(rfi_content, specifications)
+        # Build legacy prompt
+        spec_text = "\n\n".join([
+            f"--- {spec.title} ---\n{spec.content}"
+            for spec in specifications
+        ])
+
+        prompt = f"""You are an expert architectural consultant analyzing a Request for Information (RFI).
+
+## RFI Content:
+{rfi_content}
+
+## Project Specifications:
+{spec_text}
+
+Please analyze the RFI and attached drawings/images. Provide a response in JSON format."""
 
         # Build content with images
         content = []
@@ -108,16 +223,15 @@ class ClaudeService(AIService):
                 }
             })
 
-        # Add text prompt
         content.append({
             "type": "text",
-            "text": prompt + "\n\nPlease also consider the attached drawings/images in your analysis."
+            "text": prompt
         })
 
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=2048,
                 messages=[
                     {
                         "role": "user",
@@ -127,20 +241,17 @@ class ClaudeService(AIService):
             )
 
             response_text = message.content[0].text
-            analysis_data = self._parse_response(response_text)
+            analysis_data = self._parse_legacy_response(response_text)
 
             return RFIAnalysis(**analysis_data)
 
         except Exception as e:
-            print(f"Claude vision analysis failed: {e}")
-            # Fall back to text-only analysis
+            logger.error(f"Claude vision analysis failed: {e}")
             return await self.analyze_rfi(rfi_content, specifications)
 
-    def _parse_response(self, response_text: str) -> dict:
-        """Parse AI response and extract structured data"""
-        # Try to extract JSON from response
+    def _parse_legacy_response(self, response_text: str) -> dict:
+        """Parse legacy AI response format."""
         try:
-            # Handle case where response might have markdown code blocks
             if "```json" in response_text:
                 start = response_text.index("```json") + 7
                 end = response_text.index("```", start)
@@ -160,31 +271,11 @@ class ClaudeService(AIService):
                 "confidence": float(data.get("confidence", 0.5))
             }
         except (json.JSONDecodeError, ValueError):
-            return self._extract_from_text(response_text)
-
-    def _extract_from_text(self, text: str) -> dict:
-        """Fallback: Extract analysis data from unstructured text"""
-        text_lower = text.lower()
-
-        status = "comment"
-        if "accepted" in text_lower and "not accepted" not in text_lower:
-            status = "accepted"
-        elif "rejected" in text_lower or "reject" in text_lower:
-            status = "rejected"
-        elif "consultant" in text_lower or "refer" in text_lower:
-            status = "refer_to_consultant"
-
-        consultant_type = None
-        for keyword in ["structural", "electrical", "mechanical", "plumbing", "hvac", "civil", "fire"]:
-            if keyword in text_lower:
-                consultant_type = keyword
-                break
-
-        return {
-            "status": status,
-            "consultant_type": consultant_type,
-            "reason": text[:500] if len(text) > 500 else text,
-            "spec_reference": None,
-            "spec_quote": None,
-            "confidence": 0.4
-        }
+            return {
+                "status": "comment",
+                "consultant_type": None,
+                "reason": response_text[:500],
+                "spec_reference": None,
+                "spec_quote": None,
+                "confidence": 0.3
+            }
