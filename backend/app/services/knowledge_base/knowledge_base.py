@@ -279,6 +279,90 @@ class KnowledgeBase:
         
         return sorted_results
 
+    def hybrid_search(
+        self,
+        query: str,
+        keywords: list[str] = None,
+        n_results: int = 10,
+        semantic_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+        min_score: float = 0.2
+    ) -> list[dict]:
+        """
+        Hybrid search combining semantic and keyword matching.
+        
+        This approach provides:
+        1. Semantic understanding (via embeddings) for concept matching
+        2. Keyword matching for exact term relevance
+        3. Combined scoring for best of both approaches
+        
+        Args:
+            query: The semantic search query
+            keywords: Optional list of keywords for exact matching
+            n_results: Maximum results to return
+            semantic_weight: Weight for semantic similarity (0-1)
+            keyword_weight: Weight for keyword matching (0-1)
+            min_score: Minimum combined score threshold
+            
+        Returns:
+            List of results sorted by combined score
+        """
+        import re
+        
+        # Get semantic search results (more than needed, we'll re-rank)
+        semantic_results = self.search(query, n_results=n_results * 3, min_score=0.0)
+        
+        # Extract keywords from query if not provided
+        if keywords is None:
+            # Simple keyword extraction: remove stopwords and short words
+            stopwords = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+                        'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+                        'would', 'could', 'should', 'may', 'might', 'must', 'can',
+                        'for', 'and', 'nor', 'but', 'or', 'yet', 'so', 'of', 'in',
+                        'on', 'at', 'to', 'from', 'by', 'with', 'what', 'which',
+                        'who', 'whom', 'this', 'that', 'these', 'those', 'it'}
+            
+            words = re.findall(r'\b[a-zA-Z]+\b', query.lower())
+            keywords = [w for w in words if w not in stopwords and len(w) > 2]
+        
+        # Score and combine results
+        scored_results = []
+        for r in semantic_results:
+            text_lower = r.text.lower()
+            
+            # Calculate keyword score
+            keyword_matches = 0
+            for kw in keywords:
+                if kw.lower() in text_lower:
+                    keyword_matches += 1
+            
+            keyword_score = keyword_matches / max(len(keywords), 1) if keywords else 0
+            
+            # Calculate combined score
+            combined_score = (
+                r.score * semantic_weight + 
+                keyword_score * keyword_weight
+            )
+            
+            if combined_score >= min_score:
+                scored_results.append({
+                    "text": r.text,
+                    "source": r.source_filename,
+                    "source_file_id": r.source_file_id,
+                    "section": r.section_title,
+                    "score": round(combined_score, 4),
+                    "semantic_score": round(r.score, 4),
+                    "keyword_score": round(keyword_score, 4),
+                })
+        
+        # Sort by combined score and limit
+        scored_results.sort(key=lambda x: x["score"], reverse=True)
+        results = scored_results[:n_results]
+        
+        logger.info(f"Hybrid search: '{query[:50]}...' -> {len(results)} results")
+        
+        return results
+
     def get_stats(self) -> dict:
         """Get statistics about the knowledge base."""
         store_stats = self.vector_store.get_stats()

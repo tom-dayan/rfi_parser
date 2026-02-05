@@ -274,6 +274,8 @@ eventSource.onmessage = (event) => {
 
 ### Available Tools
 
+#### File System Tools
+
 | Tool | Description |
 |------|-------------|
 | `browse_folder` | List contents of a directory |
@@ -282,6 +284,28 @@ eventSource.onmessage = (event) => {
 | `search_drawings` | Search specifically for drawing files |
 | `get_file_content` | Get parsed text content of a file |
 | `get_file_metadata` | Get file metadata without parsing |
+
+#### OLI Knowledge Base Tools
+
+These tools provide access to the OLI project data and AI analysis:
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all projects in the OLI Knowledge Base |
+| `get_project_info` | Get detailed information about a specific project |
+| `get_rfi_context` | Get full context for an RFI/Submittal (content, analysis, spec references) |
+| `search_specs` | Search indexed specifications using semantic search |
+| `get_analysis_results` | Get AI analysis results for a project |
+
+#### Example Usage in Claude Desktop
+
+Once configured, you can ask Claude things like:
+
+- "List all my OLI projects"
+- "Show me the details for project 'Building A Renovation'"
+- "Get the context for RFI #92 so I can help draft a response"
+- "Search the specs for waterproofing requirements"
+- "What are the analysis results for project 5?"
 
 ---
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { searchFiles, getSearchContent, type SearchResult } from '../services/api';
+import { Badge, Skeleton } from './ui';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -111,21 +112,31 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
     return icons[type] || icons.document;
   };
 
+  const getFileTypeVariant = (fileType?: string): 'rfi' | 'submittal' | 'spec' | 'drawing' | 'default' => {
+    switch (fileType?.toLowerCase()) {
+      case 'rfi': return 'rfi';
+      case 'submittal': return 'submittal';
+      case 'specification': return 'spec';
+      case 'drawing': return 'drawing';
+      default: return 'default';
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="min-h-screen px-4 text-center">
         {/* Backdrop */}
-        <div className="fixed inset-0 bg-black/50 transition-opacity" />
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-fade-in" />
 
         {/* Dialog */}
         <div
-          className="inline-block w-full max-w-3xl my-8 text-left align-top transition-all transform bg-white shadow-2xl rounded-2xl overflow-hidden"
+          className="inline-block w-full max-w-4xl my-8 text-left align-top transition-all transform bg-white shadow-elevated rounded-2xl overflow-hidden animate-slide-up"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Search input */}
-          <div className="relative border-b border-slate-200">
+          <div className="relative border-b border-stone-200">
             <svg
-              className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"
+              className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -141,55 +152,71 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
                 setSelectedIndex(0);
               }}
               placeholder="Search files, drawings, specifications..."
-              className="w-full pl-12 pr-4 py-4 text-lg focus:outline-none"
+              className="w-full pl-14 pr-16 py-5 text-lg focus:outline-none placeholder-stone-400"
             />
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <kbd className="px-2 py-1 text-xs text-slate-400 bg-slate-100 rounded">ESC</kbd>
+            <div className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2">
+              <kbd className="px-2 py-1 text-xs text-stone-400 bg-stone-100 rounded-md border border-stone-200">ESC</kbd>
             </div>
           </div>
 
           {/* Results */}
           <div className="flex">
             {/* Results list */}
-            <div className="w-1/2 max-h-[60vh] overflow-y-auto border-r border-slate-200">
+            <div className="w-1/2 max-h-[60vh] overflow-y-auto border-r border-stone-200 scrollbar-thin">
               {query.length < 2 && (
                 <div className="p-8 text-center">
-                  <p className="text-slate-500">Type at least 2 characters to search</p>
-                  <div className="mt-4 space-y-2">
-                    <p className="text-xs text-slate-400">Try searching for:</p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {['door detail', 'RFI', 'waterproofing', 'foundation'].map((term) => (
-                        <button
-                          key={term}
-                          onClick={() => setQuery(term)}
-                          className="px-2 py-1 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
-                        >
-                          {term}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="w-12 h-12 mx-auto rounded-xl bg-stone-100 flex items-center justify-center mb-4">
+                    <svg className="w-6 h-6 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <p className="text-stone-600 font-medium mb-1">Start typing to search</p>
+                  <p className="text-stone-400 text-sm mb-4">Find files across all projects</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {['door detail', 'RFI', 'waterproofing', 'landscape'].map((term) => (
+                      <button
+                        key={term}
+                        onClick={() => setQuery(term)}
+                        className="px-3 py-1.5 text-sm text-primary-700 bg-primary-50 rounded-full hover:bg-primary-100 transition"
+                      >
+                        {term}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
 
               {isLoading && query.length >= 2 && (
-                <div className="p-8 text-center">
-                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-slate-300 border-t-blue-600" />
+                <div className="p-4 space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3 p-3">
+                      <Skeleton width={32} height={32} />
+                      <div className="flex-1">
+                        <Skeleton variant="text" width="60%" className="mb-2" />
+                        <Skeleton variant="text" width="40%" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
               {!isLoading && query.length >= 2 && results.length === 0 && (
                 <div className="p-8 text-center">
-                  <p className="text-slate-500">No results found for "{query}"</p>
-                  <p className="text-sm text-slate-400 mt-2">Try different keywords or wildcards (*)</p>
+                  <div className="w-12 h-12 mx-auto rounded-xl bg-stone-100 flex items-center justify-center mb-4">
+                    <svg className="w-6 h-6 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <p className="text-stone-600 font-medium">No results for "{query}"</p>
+                  <p className="text-sm text-stone-400 mt-1">Try different keywords</p>
                 </div>
               )}
 
               {results.map((result, index) => (
                 <button
                   key={result.path}
-                  className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-slate-50 transition ${
-                    index === selectedIndex ? 'bg-blue-50' : ''
+                  className={`w-full text-left px-4 py-3 flex items-start gap-3 transition ${
+                    index === selectedIndex ? 'bg-primary-50' : 'hover:bg-stone-50'
                   }`}
                   onClick={() => {
                     onSelectFile?.(result);
@@ -197,27 +224,24 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
                   }}
                   onMouseEnter={() => setSelectedIndex(index)}
                 >
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
-                    index === selectedIndex ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'
+                  <div className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${
+                    index === selectedIndex ? 'bg-primary-100 text-primary-600' : 'bg-stone-100 text-stone-500'
                   }`}>
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={getFileIcon(result.file_type, result.extension)} />
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-slate-900 truncate">{result.filename}</p>
-                    <p className="text-sm text-slate-500 truncate">{result.path}</p>
-                    <div className="flex items-center gap-3 mt-1">
+                    <p className="font-medium text-stone-900 truncate">{result.filename}</p>
+                    <p className="text-sm text-stone-500 truncate">{result.path}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
                       {result.file_type && (
-                        <span className="text-xs text-slate-400">{result.file_type}</span>
+                        <Badge variant={getFileTypeVariant(result.file_type)} size="sm">
+                          {result.file_type}
+                        </Badge>
                       )}
                       {result.size_bytes && (
-                        <span className="text-xs text-slate-400">{formatFileSize(result.size_bytes)}</span>
-                      )}
-                      {result.project_name && (
-                        <span className="text-xs px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
-                          {result.project_name}
-                        </span>
+                        <span className="text-xs text-stone-400">{formatFileSize(result.size_bytes)}</span>
                       )}
                     </div>
                   </div>
@@ -226,29 +250,38 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
             </div>
 
             {/* Preview pane */}
-            <div className="w-1/2 max-h-[60vh] overflow-y-auto bg-slate-50 p-4">
+            <div className="w-1/2 max-h-[60vh] overflow-y-auto bg-stone-50 p-5 scrollbar-thin">
               {!previewPath && (
-                <div className="h-full flex items-center justify-center text-slate-400">
-                  <p>Select a file to preview</p>
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="w-12 h-12 mx-auto rounded-xl bg-stone-200 flex items-center justify-center mb-3">
+                      <svg className="w-6 h-6 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </div>
+                    <p className="text-stone-500">Select a file to preview</p>
+                  </div>
                 </div>
               )}
 
               {previewLoading && previewPath && (
-                <div className="h-full flex items-center justify-center">
-                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-slate-300 border-t-blue-600" />
+                <div className="space-y-3">
+                  <Skeleton variant="text" width="50%" height={24} />
+                  <Skeleton height={200} />
                 </div>
               )}
 
               {previewContent && (
-                <div>
+                <div className="animate-fade-in">
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="font-medium text-slate-900">{previewContent.filename}</span>
+                    <span className="font-semibold text-stone-900">{previewContent.filename}</span>
                     {previewContent.was_cached && (
-                      <span className="text-xs text-slate-400">(cached)</span>
+                      <Badge variant="default" size="sm">cached</Badge>
                     )}
                   </div>
-                  <pre className="text-sm text-slate-600 whitespace-pre-wrap font-mono bg-white p-3 rounded-lg border border-slate-200 overflow-x-auto">
-                    {previewContent.content || '(No text content)'}
+                  <pre className="text-sm text-stone-600 whitespace-pre-wrap font-mono bg-white p-4 rounded-xl border border-stone-200 overflow-x-auto leading-relaxed">
+                    {previewContent.content || '(No text content available)'}
                   </pre>
                 </div>
               )}
@@ -256,17 +289,20 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
           </div>
 
           {/* Footer */}
-          <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+          <div className="px-5 py-3 bg-stone-50 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500">
             <div className="flex items-center gap-4">
-              <span>
-                <kbd className="px-1.5 py-0.5 bg-slate-200 rounded">↑↓</kbd> to navigate
+              <span className="flex items-center gap-1">
+                <kbd className="px-1.5 py-0.5 bg-white border border-stone-200 rounded text-stone-500">↑</kbd>
+                <kbd className="px-1.5 py-0.5 bg-white border border-stone-200 rounded text-stone-500">↓</kbd>
+                <span className="ml-1">navigate</span>
               </span>
-              <span>
-                <kbd className="px-1.5 py-0.5 bg-slate-200 rounded">Enter</kbd> to select
+              <span className="flex items-center gap-1">
+                <kbd className="px-1.5 py-0.5 bg-white border border-stone-200 rounded text-stone-500">↵</kbd>
+                <span className="ml-1">select</span>
               </span>
             </div>
             {searchResults && (
-              <span>{searchResults.total} results</span>
+              <span className="font-medium">{searchResults.total} results</span>
             )}
           </div>
         </div>

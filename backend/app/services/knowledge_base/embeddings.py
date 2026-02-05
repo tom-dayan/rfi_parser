@@ -1,6 +1,7 @@
 """Embedding services for knowledge base."""
 from abc import ABC, abstractmethod
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ollama
 
 
@@ -84,13 +85,32 @@ class OllamaEmbeddings(EmbeddingService):
                 return response['embedding']
             raise
 
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts."""
-        # Ollama doesn't have native batch embedding, so we loop
-        # Could be parallelized for performance
-        embeddings = []
-        for text in texts:
-            embeddings.append(self.embed(text))
+    def embed_batch(self, texts: list[str], max_workers: int = 4) -> list[list[float]]:
+        """
+        Embed multiple texts with parallel processing.
+        
+        Uses ThreadPoolExecutor for concurrent API calls to Ollama,
+        which significantly speeds up batch embedding.
+        """
+        if len(texts) <= 1:
+            return [self.embed(text) for text in texts]
+        
+        # Use parallel processing for larger batches
+        embeddings = [None] * len(texts)
+        
+        def embed_with_index(index: int, text: str):
+            return index, self.embed(text)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(embed_with_index, i, text)
+                for i, text in enumerate(texts)
+            ]
+            
+            for future in as_completed(futures):
+                idx, embedding = future.result()
+                embeddings[idx] = embedding
+        
         return embeddings
 
     @property

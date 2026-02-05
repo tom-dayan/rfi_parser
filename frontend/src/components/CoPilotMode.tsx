@@ -18,7 +18,7 @@ export default function CoPilotMode({
   result,
   specFiles,
   projectId,
-  projectName,
+  projectName: _projectName,
   onClose,
   onSave,
 }: CoPilotModeProps) {

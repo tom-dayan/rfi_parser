@@ -47,7 +47,8 @@ class ClaudeService(AIService):
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=2048,
+                max_tokens=4096,  # Increased for more detailed responses
+                temperature=0.3,  # Lower temperature for more consistent, professional responses
                 messages=[
                     {
                         "role": "user",
@@ -66,7 +67,9 @@ class ClaudeService(AIService):
                 response_text=data.get("response_text", ""),
                 status=data.get("status") if document_type == "submittal" else None,
                 consultant_type=data.get("consultant_type"),
-                confidence=float(data.get("confidence", 0.5))
+                confidence=float(data.get("confidence", 0.5)),
+                suggested_followup=data.get("suggested_followup"),
+                citations=data.get("citations"),
             )
 
         except anthropic.APIError as e:
@@ -88,21 +91,24 @@ class ClaudeService(AIService):
         """Parse AI response for document processing."""
         try:
             # Handle case where response might have markdown code blocks
+            json_text = response_text
             if "```json" in response_text:
                 start = response_text.index("```json") + 7
                 end = response_text.index("```", start)
-                response_text = response_text[start:end].strip()
+                json_text = response_text[start:end].strip()
             elif "```" in response_text:
                 start = response_text.index("```") + 3
                 end = response_text.index("```", start)
-                response_text = response_text[start:end].strip()
+                json_text = response_text[start:end].strip()
 
-            data = json.loads(response_text)
+            data = json.loads(json_text)
 
             result = {
                 "response_text": data.get("response_text", ""),
                 "consultant_type": data.get("consultant_type"),
-                "confidence": float(data.get("confidence", 0.5))
+                "confidence": float(data.get("confidence", 0.5)),
+                "suggested_followup": data.get("suggested_followup"),
+                "citations": data.get("citations", []),
             }
 
             if document_type == "submittal":
@@ -114,8 +120,8 @@ class ClaudeService(AIService):
 
             return result
 
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Failed to parse JSON response, extracting from text")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse JSON response: {e}, extracting from text")
             return self._extract_from_text_document(response_text, document_type)
 
     def _extract_from_text_document(self, text: str, document_type: DocumentType) -> dict:

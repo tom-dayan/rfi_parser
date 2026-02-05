@@ -1,31 +1,78 @@
-# RFI Processing Tool
+# OLI Knowledge Base
 
-An intelligent web application for architects to upload RFIs (Request for Information) and specifications, then automatically analyze and respond to each RFI based on the specifications using AI.
+An intelligent knowledge base and document analysis system for architecture firms. Analyze RFIs, submittals, and specifications with AI-powered assistance.
 
 ## Features
 
-- **Document Upload**: Support for PDF, DOCX, and text-based documents
-- **AI-Powered Analysis**: Automatically analyze RFIs against specifications
-- **Smart Status Detection**:
-  - ✅ Accepted - RFI aligns with specifications
-  - ❌ Rejected - RFI contradicts specifications
-  - 💬 Comment - Needs clarification
-  - 👥 Refer to Consultant - Requires expert consultation
-- **Detailed Reporting**:
-  - Reasons for non-accepted RFIs
-  - Specification references that support decisions
-  - Relevant quotes from specifications
-  - Confidence scores
-- **User-Friendly Interface**: Modern, responsive design built with React and TailwindCSS
-- **Flexible AI Backend**: Choose from Google Gemini (recommended), local Ollama, or Claude API
-- **RAG-Powered**: Vector search retrieves relevant specification sections for accurate responses
+### Document Analysis
+- **AI-Powered RFI/Submittal Analysis**: Automatically analyze documents against project specifications
+- **Smart Response Generation**: Draft responses with relevant spec references
+- **Co-Pilot Mode**: Interactive AI assistant for refining responses
+- **OCR Support**: Extract text from scanned documents and images
 
-### NEW: MCP Server Integration
+### Knowledge Base
+- **Project Management**: Organize documents by project with auto-discovery
+- **Semantic Search**: Find relevant information across all project documents  
+- **Global Search**: Search across all projects from the dashboard
+- **Ask OLI**: Chat with your project documents
 
-- **Claude Desktop Integration**: Connect the firm's shared folders to Claude Desktop
-- **Universal Search**: Search drawings, specs, and documents across all projects
-- **On-Demand Parsing**: Files are parsed when accessed, no heavy upfront indexing
-- **Cross-Platform**: Works on Windows and macOS
+### Claude Desktop Integration
+- **MCP Server**: Connect your firm's shared folders to Claude Desktop
+- **Seamless Workflow**: Start in the app, continue drafting in Claude
+- **Smart Tools**: Access projects, RFIs, and specs directly from Claude
+
+## Quick Start
+
+### One-Line Setup
+
+**macOS/Linux:**
+```bash
+git clone https://github.com/your-org/rfi_parser.git
+cd rfi_parser
+chmod +x scripts/setup.sh && ./scripts/setup.sh
+```
+
+**Windows:**
+```powershell
+git clone https://github.com/your-org/rfi_parser.git
+cd rfi_parser
+scripts\setup.bat
+```
+
+### What Gets Installed
+- Python virtual environment with all dependencies
+- Frontend dependencies (if Node.js is installed)
+- Configuration file template
+
+### Configuration
+
+Edit `backend/.env` to add your API key:
+
+```env
+AI_PROVIDER=claude
+CLAUDE_API_KEY=your_api_key_here
+
+# Optional: Path to shared folders for project discovery
+SHARED_FOLDERS_ROOT=/path/to/your/shared/folders
+```
+
+### Start the Application
+
+**macOS/Linux:**
+```bash
+./start.sh
+```
+
+**Windows:**
+```powershell
+start.bat
+```
+
+Then open http://localhost:5173 in your browser.
+
+## Manual Installation
+
+If you prefer to set up manually or need more control:
 
 ## Architecture
 

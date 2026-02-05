@@ -72,6 +72,71 @@ def list_projects(db: Session = Depends(get_db)):
     return result
 
 
+@router.get("/discover")
+def discover_projects_endpoint(
+    root_path: Optional[str] = None,
+    max_depth: int = 3,
+    min_confidence: float = 0.3,
+):
+    """
+    Discover potential projects from shared folder roots.
+    
+    If root_path is not provided, uses the configured SHARED_FOLDERS_ROOT.
+    """
+    from ..services.project_discovery import discover_projects
+    from ..config import settings
+    
+    # Use provided root or fall back to configured root
+    if root_path:
+        root_paths = [root_path]
+    elif settings.shared_folders_root:
+        # Split by comma in case multiple roots are configured
+        root_paths = [p.strip() for p in settings.shared_folders_root.split(',')]
+    else:
+        raise HTTPException(
+            status_code=400, 
+            detail="No root path provided and SHARED_FOLDERS_ROOT is not configured"
+        )
+    
+    # Validate roots exist
+    valid_roots = []
+    for rp in root_paths:
+        if os.path.exists(rp) and os.path.isdir(rp):
+            valid_roots.append(rp)
+    
+    if not valid_roots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"None of the root paths exist: {root_paths}"
+        )
+    
+    # Discover projects
+    candidates = discover_projects(
+        root_paths=valid_roots,
+        max_depth=max_depth,
+        min_confidence=min_confidence,
+    )
+    
+    return {
+        "root_paths": valid_roots,
+        "candidates": [
+            {
+                "name": c.name,
+                "root_path": c.root_path,
+                "rfi_folder": c.rfi_folder,
+                "specs_folder": c.specs_folder,
+                "confidence": c.confidence,
+                "file_count": c.file_count,
+                "rfi_count": c.rfi_count,
+                "spec_count": c.spec_count,
+                "reasons": c.reasons,
+            }
+            for c in candidates
+        ],
+        "total": len(candidates),
+    }
+
+
 @router.get("/{project_id}", response_model=ProjectWithStats)
 def get_project(project_id: int, db: Session = Depends(get_db)):
     """Get a project by ID with stats"""

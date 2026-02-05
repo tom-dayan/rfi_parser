@@ -1,19 +1,20 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getProjectResults,
   getProjectFiles,
-  processDocuments,
+  processDocumentsStream,
   indexKnowledgeBase,
   getKnowledgeBaseStats,
   updateResult,
+  type ProcessProgressEvent,
 } from '../services/api';
 import CoPilotMode from './CoPilotMode';
+import { Card, Button, Badge, Progress, StepProgress } from './ui';
 import type {
   ProcessingResultWithFile,
   DocumentType,
   SubmittalStatus,
-  ProjectFileSummary,
 } from '../types';
 
 interface DashboardProps {
@@ -60,7 +61,13 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
   const [analyzeState, setAnalyzeState] = useState<{
     phase: 'idle' | 'indexing' | 'processing' | 'complete' | 'error';
     message: string;
+    currentFile?: string;
+    currentIndex?: number;
+    totalFiles?: number;
+    processedCount?: number;
   }>({ phase: 'idle', message: '' });
+  
+  const processStreamRef = useRef<{ cancel: () => void } | null>(null);
 
   // Index knowledge base mutation
   const indexMutation = useMutation({
@@ -71,20 +78,11 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
     },
   });
 
-  // Process documents mutation
-  const processMutation = useMutation({
-    mutationFn: () => processDocuments(projectId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['results', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
-    },
-  });
-
   const handleIndex = () => {
     indexMutation.mutate();
   };
 
-  // Combined analyze workflow: index (if needed) + process
+  // Combined analyze workflow: index (if needed) + process with streaming
   const handleAnalyze = async () => {
     setAnalyzeState({ phase: 'indexing', message: 'Indexing specifications...' });
     
@@ -93,21 +91,53 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
       await indexKnowledgeBase(projectId, false);
       queryClient.invalidateQueries({ queryKey: ['kb-stats', projectId] });
       
-      setAnalyzeState({ phase: 'processing', message: 'Analyzing documents...' });
-      
-      const result = await processDocuments(projectId);
-      queryClient.invalidateQueries({ queryKey: ['results', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
-      
       setAnalyzeState({ 
-        phase: 'complete', 
-        message: `Analyzed ${result.results_count} documents successfully!` 
+        phase: 'processing', 
+        message: 'Starting document analysis...',
+        currentIndex: 0,
+        totalFiles: rfiFiles.length + submittalFiles.length,
+        processedCount: 0
       });
       
-      // Reset after 5 seconds
-      setTimeout(() => {
-        setAnalyzeState({ phase: 'idle', message: '' });
-      }, 5000);
+      // Use streaming endpoint for real-time progress
+      processStreamRef.current = processDocumentsStream(
+        projectId,
+        (event: ProcessProgressEvent) => {
+          if (event.event_type === 'processing' || event.event_type === 'file_complete') {
+            setAnalyzeState(prev => ({
+              ...prev,
+              phase: 'processing',
+              message: event.message,
+              currentFile: event.current_file,
+              currentIndex: event.current_file_index,
+              totalFiles: event.total_files || prev.totalFiles,
+              processedCount: event.event_type === 'file_complete' && event.success 
+                ? (prev.processedCount || 0) + 1 
+                : prev.processedCount
+            }));
+          } else if (event.event_type === 'complete') {
+            queryClient.invalidateQueries({ queryKey: ['results', projectId] });
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
+            
+            setAnalyzeState({ 
+              phase: 'complete', 
+              message: `Analyzed ${event.processed} documents successfully!`,
+              processedCount: event.processed,
+              totalFiles: event.total_files
+            });
+            
+            // Reset after 5 seconds
+            setTimeout(() => {
+              setAnalyzeState({ phase: 'idle', message: '' });
+            }, 5000);
+          } else if (event.event_type === 'error') {
+            setAnalyzeState({ 
+              phase: 'error', 
+              message: event.message || 'Analysis failed. Please try again.'
+            });
+          }
+        }
+      );
       
     } catch (err) {
       setAnalyzeState({ 
@@ -115,6 +145,15 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
         message: err instanceof Error ? err.message : 'Analysis failed. Please try again.' 
       });
     }
+  };
+  
+  // Cancel processing on unmount
+  const handleCancelProcessing = () => {
+    if (processStreamRef.current) {
+      processStreamRef.current.cancel();
+      processStreamRef.current = null;
+    }
+    setAnalyzeState({ phase: 'idle', message: '' });
   };
 
   const isAnalyzing = analyzeState.phase === 'indexing' || analyzeState.phase === 'processing';
@@ -138,102 +177,156 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
 
   const totalDocs = rfiFiles.length + submittalFiles.length;
   const isKbIndexed = kbStats?.indexed ?? false;
-  const canProcess = isKbIndexed && totalDocs > 0;
 
   return (
     <div className="space-y-6">
       {/* Knowledge Base Status Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <Card>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isKbIndexed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
-              <svg className={`w-5 h-5 ${isKbIndexed ? 'text-emerald-600' : 'text-amber-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex items-center gap-4">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${isKbIndexed ? 'bg-spec-100' : 'bg-amber-100'}`}>
+              <svg className={`w-5 h-5 ${isKbIndexed ? 'text-spec-600' : 'text-amber-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Knowledge Base</h3>
-              <p className="text-sm text-slate-500">
+              <h3 className="font-semibold text-stone-900">Knowledge Base</h3>
+              <div className="flex items-center gap-2 mt-1">
                 {isKbIndexed ? (
-                  <span className="text-emerald-600">
-                    {kbStats?.document_count ?? 0} chunks from {specFiles.length} specs
-                  </span>
+                  <>
+                    <Badge variant="success" size="sm" dot>Ready</Badge>
+                    <span className="text-sm text-stone-500">
+                      {kbStats?.document_count ?? 0} chunks from {specFiles.length} specs
+                    </span>
+                  </>
                 ) : (
-                  <span className="text-amber-600">Not indexed yet</span>
+                  <Badge variant="warning" size="sm" dot>Not indexed</Badge>
                 )}
-              </p>
+              </div>
             </div>
           </div>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleIndex}
             disabled={indexMutation.isPending || specFiles.length === 0}
-            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            loading={indexMutation.isPending}
           >
-            {indexMutation.isPending ? 'Indexing...' : isKbIndexed ? 'Re-index' : 'Index Specs'}
-          </button>
+            {isKbIndexed ? 'Re-index' : 'Index Specs'}
+          </Button>
         </div>
         {indexMutation.isSuccess && (
-          <div className="mt-3 p-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm border border-emerald-200">
+          <div className="mt-4 p-3 bg-spec-50 text-spec-700 rounded-xl text-sm border border-spec-200 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
             Indexed {indexMutation.data.files_indexed} files ({indexMutation.data.chunks_created} chunks)
           </div>
         )}
         {indexMutation.isError && (
-          <div className="mt-3 p-2 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200">
+          <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm border border-red-200">
             Indexing failed. Please try again.
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Results Header */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <Card>
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Results</h2>
-            <p className="text-sm text-slate-500 mt-1">
-              {rfiFiles.length} RFIs, {submittalFiles.length} Submittals, {results.length} processed
-            </p>
+            <h2 className="text-lg font-semibold text-stone-900">Document Analysis</h2>
+            <div className="flex items-center gap-3 mt-2">
+              <Badge variant="rfi">{rfiFiles.length} RFIs</Badge>
+              <Badge variant="submittal">{submittalFiles.length} Submittals</Badge>
+              {results.length > 0 && (
+                <Badge variant="success">{results.length} analyzed</Badge>
+              )}
+            </div>
           </div>
-          <button
+          <Button
+            variant="primary"
             onClick={handleAnalyze}
             disabled={isAnalyzing || totalDocs === 0 || specFiles.length === 0}
-            className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center shadow-sm"
+            loading={isAnalyzing}
           >
-            {isAnalyzing ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                {analyzeState.message}
-              </>
-            ) : (
-              'Analyze Documents'
-            )}
-          </button>
+            {isAnalyzing ? analyzeState.message : 'Analyze Documents'}
+          </Button>
         </div>
+
+        {/* Progress indicator during analysis */}
+        {isAnalyzing && (
+          <div className="mb-6 p-4 bg-primary-50 rounded-xl border border-primary-200">
+            <StepProgress
+              steps={[
+                { id: 'index', label: 'Indexing' },
+                { id: 'analyze', label: 'Analyzing' },
+                { id: 'complete', label: 'Complete' },
+              ]}
+              currentStep={analyzeState.phase === 'indexing' ? 0 : analyzeState.phase === 'processing' ? 1 : 2}
+            />
+            
+            {/* Detailed progress for processing phase */}
+            {analyzeState.phase === 'processing' && analyzeState.totalFiles && (
+              <div className="mt-4">
+                <div className="flex justify-between text-xs text-primary-600 mb-2">
+                  <span>Processing documents</span>
+                  <span>{analyzeState.currentIndex || 0} of {analyzeState.totalFiles}</span>
+                </div>
+                <Progress 
+                  value={((analyzeState.currentIndex || 0) / analyzeState.totalFiles) * 100} 
+                  size="md"
+                />
+                {analyzeState.currentFile && (
+                  <p className="text-xs text-primary-500 mt-2 truncate">
+                    Current: {analyzeState.currentFile}
+                  </p>
+                )}
+              </div>
+            )}
+            
+            <div className="flex items-center justify-between mt-4">
+              <p className="text-sm text-primary-700">{analyzeState.message}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelProcessing}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Status Messages */}
         {analyzeState.phase === 'error' && (
-          <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm mb-4 border border-red-200">
+          <div className="p-3 bg-red-50 text-red-700 rounded-xl text-sm mb-4 border border-red-200 flex items-center gap-2">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
             {analyzeState.message}
           </div>
         )}
 
         {analyzeState.phase === 'complete' && (
-          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-lg text-sm mb-4 border border-emerald-200">
+          <div className="p-3 bg-spec-50 text-spec-700 rounded-xl text-sm mb-4 border border-spec-200 flex items-center gap-2">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
             {analyzeState.message}
           </div>
         )}
 
         {totalDocs === 0 && (
-          <div className="p-3 bg-slate-50 text-slate-600 rounded-lg text-sm mb-4 border border-slate-200">
-            No RFIs or Submittals found. Scan your folders first from the Files tab.
+          <div className="p-4 bg-stone-50 text-stone-600 rounded-xl text-sm mb-4 border border-stone-200 text-center">
+            <p className="font-medium mb-1">No documents to analyze</p>
+            <p className="text-stone-500">Scan your folders first from the Files tab</p>
           </div>
         )}
 
         {totalDocs > 0 && specFiles.length === 0 && (
-          <div className="p-3 bg-amber-50 text-amber-700 rounded-lg text-sm mb-4 border border-amber-200">
-            No specification files found. Add specs to your project folder.
+          <div className="p-4 bg-amber-50 text-amber-700 rounded-xl text-sm mb-4 border border-amber-200 text-center">
+            <p className="font-medium mb-1">Specifications required</p>
+            <p className="text-amber-600">Add spec files to enable AI analysis</p>
           </div>
         )}
 
@@ -241,20 +334,20 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
         <div className="flex gap-2 flex-wrap mb-4">
           <button
             onClick={() => setDocumentTypeFilter('all')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
               documentTypeFilter === 'all'
-                ? 'bg-slate-800 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-stone-800 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
             }`}
           >
             All ({results.length})
           </button>
           <button
             onClick={() => setDocumentTypeFilter('rfi')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
               documentTypeFilter === 'rfi'
-                ? 'bg-blue-600 text-white'
-                : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                ? 'bg-rfi-600 text-white'
+                : 'bg-rfi-50 text-rfi-700 hover:bg-rfi-100'
             }`}
           >
             RFIs ({rfiResults.length})
@@ -295,7 +388,7 @@ export default function Dashboard({ projectId, projectName }: DashboardProps) {
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Results Grid */}
       {resultsLoading ? (

@@ -1,9 +1,11 @@
 """Processing router for RFIs and Submittals using RAG-based retrieval."""
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Generator
 from datetime import datetime
 import logging
+import json
 
 from ..database import get_db
 from ..models import Project, ProjectFile, ProcessingResult
@@ -291,6 +293,190 @@ async def process_documents(
         message=f"Processed {len(results)} documents",
         results_count=len(results),
         results=results
+    )
+
+
+@router.post("/projects/{project_id}/process-stream")
+async def process_documents_stream(
+    project_id: int,
+    document_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Process RFIs or Submittals with SSE streaming progress updates.
+    Provides real-time feedback as each document is processed.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check if knowledge base is indexed
+    if not project.kb_indexed:
+        raise HTTPException(
+            status_code=400,
+            detail="Knowledge base not indexed. Please index specifications first."
+        )
+
+    # Get files to process
+    query = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.content_type.in_(['rfi', 'submittal'])
+    )
+
+    if document_type:
+        query = query.filter(ProjectFile.content_type == document_type)
+
+    files_to_process = query.all()
+    total_files = len(files_to_process)
+
+    if total_files == 0:
+        raise HTTPException(status_code=400, detail="No documents found to process")
+
+    # Pre-load file data for the generator
+    file_data = [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "content_type": f.content_type,
+            "content_text": f.content_text
+        }
+        for f in files_to_process
+    ]
+
+    def generate_events() -> Generator[str, None, None]:
+        from ..database import SessionLocal
+        
+        gen_db = SessionLocal()
+        kb = get_knowledge_base(project_id)
+        ai_service = _get_ai_service()
+        
+        processed = 0
+        errors = []
+        
+        try:
+            # Send start event
+            start_msg = f'Starting to process {total_files} documents...'
+            yield f"data: {json.dumps({'event_type': 'start', 'total_files': total_files, 'message': start_msg})}\n\n"
+            
+            for idx, file_info in enumerate(file_data):
+                # Send progress event
+                filename = file_info['filename']
+                progress_msg = f'Analyzing {filename}...'
+                yield f"data: {json.dumps({'event_type': 'processing', 'current_file': filename, 'current_file_index': idx + 1, 'total_files': total_files, 'message': progress_msg})}\n\n"
+                
+                try:
+                    # Delete existing result
+                    gen_db.query(ProcessingResult).filter(
+                        ProcessingResult.source_file_id == file_info['id']
+                    ).delete()
+                    gen_db.commit()
+                    
+                    # Get document content
+                    doc_content = file_info['content_text'] or f"[Document: {file_info['filename']}]"
+                    doc_type = file_info['content_type']
+                    
+                    # Extract question and keywords
+                    extracted = extract_question(doc_content, file_info['filename'])
+                    search_queries = extracted.get_search_queries()
+                    
+                    # Search for relevant specs
+                    if search_queries:
+                        relevant_specs = kb.search_multi_query(
+                            queries=search_queries,
+                            n_results_per_query=5,
+                            max_total_results=8,
+                            context_chars=1200,
+                            min_score=0.4
+                        )
+                    else:
+                        relevant_specs = kb.search_with_context(
+                            query=doc_content[:1000],
+                            n_results=8,
+                            context_chars=1200
+                        )
+                    
+                    # Build enhanced content
+                    enhanced_content = _build_enhanced_content(doc_content, extracted)
+                    
+                    # Generate AI response (this is async but we're in a generator)
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    ai_response = loop.run_until_complete(
+                        ai_service.process_document(
+                            document_content=enhanced_content,
+                            document_type=doc_type,
+                            spec_context=relevant_specs
+                        )
+                    )
+                    loop.close()
+                    
+                    # Create result
+                    db_result = ProcessingResult(
+                        project_id=project_id,
+                        source_file_id=file_info['id'],
+                        document_type=doc_type,
+                        response_text=ai_response.response_text,
+                        status=ai_response.status if doc_type == 'submittal' else None,
+                        consultant_type=ai_response.consultant_type,
+                        confidence=ai_response.confidence,
+                        spec_references=[
+                            {
+                                "source_file_id": ref.get("source_file_id"),
+                                "source_filename": ref.get("source"),
+                                "section": ref.get("section"),
+                                "text": ref.get("text"),
+                                "score": ref.get("score")
+                            }
+                            for ref in relevant_specs[:5]
+                        ]
+                    )
+                    gen_db.add(db_result)
+                    gen_db.commit()
+                    
+                    processed += 1
+                    
+                    # Send success event for this file
+                    complete_msg = f'Completed {filename}'
+                    yield f"data: {json.dumps({'event_type': 'file_complete', 'filename': filename, 'current_file_index': idx + 1, 'total_files': total_files, 'success': True, 'message': complete_msg})}\n\n"
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {filename}: {e}")
+                    errors.append(f"{filename}: {str(e)}")
+                    
+                    # Create error result
+                    db_result = ProcessingResult(
+                        project_id=project_id,
+                        source_file_id=file_info['id'],
+                        document_type=file_info['content_type'],
+                        response_text=f"Processing failed: {str(e)}",
+                        confidence=0.0
+                    )
+                    gen_db.add(db_result)
+                    gen_db.commit()
+                    
+                    error_msg = f'Failed: {filename}'
+                    error_str = str(e)
+                    yield f"data: {json.dumps({'event_type': 'file_complete', 'filename': filename, 'current_file_index': idx + 1, 'total_files': total_files, 'success': False, 'error': error_str, 'message': error_msg})}\n\n"
+            
+            # Send complete event
+            final_msg = f'Completed! Processed {processed} of {total_files} documents.'
+            yield f"data: {json.dumps({'event_type': 'complete', 'processed': processed, 'errors': len(errors), 'total_files': total_files, 'message': final_msg})}\n\n"
+            
+        except Exception as e:
+            error_msg = f'Processing failed: {str(e)}'
+            yield f"data: {json.dumps({'event_type': 'error', 'error': str(e), 'message': error_msg})}\n\n"
+            gen_db.rollback()
+        finally:
+            gen_db.close()
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
     )
 
 

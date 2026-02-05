@@ -111,6 +111,44 @@ export const getProjectFiles = async (
   return response.data;
 };
 
+// Project Discovery API
+export interface ProjectCandidate {
+  name: string;
+  root_path: string;
+  rfi_folder: string | null;
+  specs_folder: string | null;
+  confidence: number;
+  file_count: number;
+  rfi_count: number;
+  spec_count: number;
+  reasons: string[];
+}
+
+export interface DiscoverProjectsResponse {
+  root_paths: string[];
+  candidates: ProjectCandidate[];
+  total: number;
+}
+
+export const discoverProjects = async (
+  rootPath?: string,
+  maxDepth: number = 3,
+  minConfidence: number = 0.3
+): Promise<DiscoverProjectsResponse> => {
+  const params: Record<string, string | number> = {
+    max_depth: maxDepth,
+    min_confidence: minConfidence,
+  };
+  if (rootPath) {
+    params.root_path = rootPath;
+  }
+  const response = await api.get<DiscoverProjectsResponse>(
+    '/api/projects/discover',
+    { params }
+  );
+  return response.data;
+};
+
 // Files API
 export const getFile = async (fileId: number): Promise<ProjectFile> => {
   const response = await api.get<ProjectFile>(`/api/files/${fileId}`);
@@ -171,6 +209,61 @@ export const processDocuments = async (
     request
   );
   return response.data;
+};
+
+// Processing Progress Event type
+export interface ProcessProgressEvent {
+  event_type: 'start' | 'processing' | 'file_complete' | 'complete' | 'error';
+  current_file?: string;
+  current_file_index?: number;
+  total_files?: number;
+  processed?: number;
+  errors?: number;
+  success?: boolean;
+  error?: string;
+  message: string;
+}
+
+// Streaming process with progress updates
+export const processDocumentsStream = (
+  projectId: number,
+  onProgress: (event: ProcessProgressEvent) => void,
+  documentType?: string
+): { cancel: () => void } => {
+  const params = new URLSearchParams();
+  if (documentType) params.append('document_type', documentType);
+  
+  const url = `${API_BASE_URL}/api/projects/${projectId}/process-stream${params.toString() ? `?${params}` : ''}`;
+  
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data: ProcessProgressEvent = JSON.parse(event.data);
+      onProgress(data);
+
+      // Close connection when complete or error
+      if (data.event_type === 'complete' || data.event_type === 'error') {
+        eventSource.close();
+      }
+    } catch (e) {
+      console.error('Failed to parse SSE event:', e);
+    }
+  };
+
+  eventSource.onerror = () => {
+    eventSource.close();
+    onProgress({
+      event_type: 'error',
+      message: 'Connection lost. Please try again.'
+    });
+  };
+
+  return {
+    cancel: () => {
+      eventSource.close();
+    }
+  };
 };
 
 export const getProjectResults = async (

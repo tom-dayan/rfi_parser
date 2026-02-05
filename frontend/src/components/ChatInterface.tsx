@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { sendChatMessage, type ChatResponse } from '../services/api';
+import { Button, Badge } from './ui';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -84,27 +85,29 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-slate-200">
+    <div className="flex flex-col h-full bg-white border-l border-stone-200">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 bg-stone-50">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-sm">
             <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
           </div>
           <div>
-            <h3 className="font-medium text-slate-900">Ask OLI</h3>
-            {projectName && (
-              <p className="text-xs text-slate-500">Project: {projectName}</p>
+            <h3 className="font-semibold text-stone-900">Ask OLI</h3>
+            {projectName ? (
+              <Badge variant="default" size="sm">{projectName}</Badge>
+            ) : (
+              <p className="text-xs text-stone-500">Search all projects</p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           {messages.length > 0 && (
             <button
               onClick={clearChat}
-              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              className="p-2 text-stone-400 hover:text-stone-600 rounded-lg hover:bg-stone-100 transition"
               title="Clear chat"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -115,7 +118,7 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
           {onClose && (
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              className="p-2 text-stone-400 hover:text-stone-600 rounded-lg hover:bg-stone-100 transition"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -126,29 +129,28 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
         {messages.length === 0 && (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto rounded-full bg-purple-100 flex items-center justify-center mb-4">
-              <svg className="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="text-center py-10">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-primary-50 flex items-center justify-center mb-4">
+              <svg className="w-7 h-7 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
             </div>
-            <h4 className="font-medium text-slate-900 mb-2">Ask me anything</h4>
-            <p className="text-sm text-slate-500 max-w-sm mx-auto">
-              I can help you find information about {projectName ? 'this project' : 'your documents'}, 
-              search for drawings, specifications, and more.
+            <h4 className="font-medium text-stone-900 mb-2">Ask me anything</h4>
+            <p className="text-sm text-stone-500 max-w-xs mx-auto">
+              I can help you find information, search drawings, specs, and answer questions about {projectName ? 'this project' : 'your documents'}.
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
               {[
                 'Find door details',
-                'What specs mention waterproofing?',
-                'Search for RFI responses',
+                'Waterproofing specs',
+                'Recent RFIs',
               ].map((suggestion) => (
                 <button
                   key={suggestion}
                   onClick={() => setInput(suggestion)}
-                  className="px-3 py-1.5 text-sm text-purple-600 bg-purple-50 rounded-full hover:bg-purple-100 transition"
+                  className="px-3 py-1.5 text-sm text-primary-700 bg-primary-50 rounded-full hover:bg-primary-100 transition"
                 >
                   {suggestion}
                 </button>
@@ -160,33 +162,32 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
         {messages.map((message, index) => (
           <div
             key={index}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}
           >
             <div
-              className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+              className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                 message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-100 text-slate-900'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-stone-100 text-stone-900'
               }`}
             >
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
               
               {/* Sources */}
               {message.sources && message.sources.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-200">
-                  <p className="text-xs font-medium text-slate-500 mb-2">Sources:</p>
+                <div className="mt-3 pt-3 border-t border-stone-200/50">
+                  <p className="text-xs font-medium text-stone-500 mb-2">Sources:</p>
                   <div className="flex flex-wrap gap-1.5">
                     {message.sources.map((source, i) => (
                       <span
                         key={i}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-white rounded-lg text-slate-600"
+                        className="inline-flex items-center px-2 py-1 text-xs bg-white rounded-lg text-stone-600 shadow-sm"
                         title={source.path || source.filename}
                       >
-                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-3 h-3 mr-1 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         {source.filename}
-                        {source.section && <span className="ml-1 text-slate-400">({source.section})</span>}
                       </span>
                     ))}
                   </div>
@@ -197,12 +198,12 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
         ))}
 
         {chatMutation.isPending && (
-          <div className="flex justify-start">
-            <div className="bg-slate-100 rounded-2xl px-4 py-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-stone-100 rounded-2xl px-4 py-3">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-stone-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-stone-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-stone-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>
@@ -212,7 +213,7 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-slate-200">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-stone-200 bg-white">
         <div className="flex gap-2">
           <input
             ref={inputRef}
@@ -220,18 +221,19 @@ export default function ChatInterface({ projectId, projectName, onClose }: ChatI
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask a question..."
-            className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="input flex-1"
             disabled={chatMutation.isPending}
           />
-          <button
+          <Button
             type="submit"
+            variant="primary"
             disabled={!input.trim() || chatMutation.isPending}
-            className="px-4 py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-          </button>
+            icon={
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+            }
+          />
         </div>
       </form>
     </div>

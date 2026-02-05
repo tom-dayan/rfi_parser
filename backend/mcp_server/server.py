@@ -90,8 +90,9 @@ def _register_all_tools(server: Server) -> None:
     browse_tools = _get_browse_tools()
     search_tools = _get_search_tools()
     content_tools = _get_content_tools()
+    oli_tools = _get_oli_tools()
 
-    all_tools = browse_tools + search_tools + content_tools
+    all_tools = browse_tools + search_tools + content_tools + oli_tools
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -105,6 +106,7 @@ def _register_all_tools(server: Server) -> None:
         from mcp_server.tools.browse import _browse_folder, _list_shared_roots
         from mcp_server.tools.search import _search_files, _search_drawings
         from mcp_server.tools.content import _get_file_content, _get_file_metadata
+        from mcp_server.tools.oli import OLI_HANDLERS
 
         handlers = {
             "browse_folder": _browse_folder,
@@ -113,6 +115,7 @@ def _register_all_tools(server: Server) -> None:
             "search_drawings": _search_drawings,
             "get_file_content": _get_file_content,
             "get_file_metadata": _get_file_metadata,
+            **OLI_HANDLERS,  # Add OLI-specific tools
         }
 
         handler = handlers.get(name)
@@ -320,6 +323,12 @@ def _get_content_tools():
             },
         ),
     ]
+
+
+def _get_oli_tools():
+    """Get OLI-specific tool definitions."""
+    from mcp_server.tools.oli import get_oli_tools
+    return get_oli_tools()
 
 
 async def run_stdio_server(server: Server, logger: logging.Logger) -> None:
