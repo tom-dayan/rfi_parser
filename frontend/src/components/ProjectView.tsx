@@ -90,7 +90,7 @@ export default function ProjectView({ projectId, onBack }: ProjectViewProps) {
 
       {/* Tab Content */}
       {activeTab === 'files' && <FileExplorer projectId={projectId} />}
-      {activeTab === 'results' && <Dashboard projectId={projectId} />}
+      {activeTab === 'results' && <Dashboard projectId={projectId} projectName={project?.name} />}
     </div>
   );
 }

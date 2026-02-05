@@ -20,6 +20,13 @@ An intelligent web application for architects to upload RFIs (Request for Inform
 - **Flexible AI Backend**: Choose from Google Gemini (recommended), local Ollama, or Claude API
 - **RAG-Powered**: Vector search retrieves relevant specification sections for accurate responses
 
+### NEW: MCP Server Integration
+
+- **Claude Desktop Integration**: Connect the firm's shared folders to Claude Desktop
+- **Universal Search**: Search drawings, specs, and documents across all projects
+- **On-Demand Parsing**: Files are parsed when accessed, no heavy upfront indexing
+- **Cross-Platform**: Works on Windows and macOS
+
 ## Architecture
 
 ```
@@ -159,6 +166,31 @@ CLAUDE_API_KEY=your-api-key-here
 ```
 Get your API key at [https://console.anthropic.com](https://console.anthropic.com)
 
+## MCP Server Setup (Claude Desktop Integration)
+
+The MCP server allows Claude Desktop to search and access your firm's shared folders.
+
+### Quick Setup
+
+**macOS/Linux:**
+```bash
+./scripts/setup.sh
+python scripts/setup_mcp.py
+```
+
+**Windows:**
+```cmd
+scripts\setup.bat
+python scripts\setup_mcp.py
+```
+
+This will:
+1. Create a virtual environment with all dependencies
+2. Configure Claude Desktop to use the MCP server
+3. Set up access to your shared folders
+
+See [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) for detailed instructions.
+
 ## Project Structure
 
 ```
@@ -176,7 +208,19 @@ rfi_parser/
 │   │   ├── services/    # Business logic
 │   │   ├── models.py    # Database models
 │   │   └── main.py      # App entry point
+│   ├── mcp_server/      # MCP server for Claude Desktop
+│   │   ├── server.py    # Main entry point
+│   │   ├── tools/       # MCP tools (browse, search, content)
+│   │   └── config.py    # Configuration
 │   └── requirements.txt
+│
+├── scripts/              # Setup and utility scripts
+│   ├── setup.sh         # macOS/Linux setup
+│   ├── setup.bat        # Windows setup
+│   └── setup_mcp.py     # MCP configuration wizard
+│
+├── docs/                 # Documentation
+│   └── MCP_INTEGRATION.md
 │
 └── README.md
 ```

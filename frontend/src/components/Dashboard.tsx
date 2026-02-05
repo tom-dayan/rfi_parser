@@ -8,20 +8,24 @@ import {
   getKnowledgeBaseStats,
   updateResult,
 } from '../services/api';
+import CoPilotMode from './CoPilotMode';
 import type {
   ProcessingResultWithFile,
   DocumentType,
   SubmittalStatus,
+  ProjectFileSummary,
 } from '../types';
 
 interface DashboardProps {
   projectId: number;
+  projectName?: string;
 }
 
-export default function Dashboard({ projectId }: DashboardProps) {
+export default function Dashboard({ projectId, projectName }: DashboardProps) {
   const [documentTypeFilter, setDocumentTypeFilter] = useState<DocumentType | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<SubmittalStatus | 'all'>('all');
   const [selectedResult, setSelectedResult] = useState<ProcessingResultWithFile | null>(null);
+  const [coPilotResult, setCoPilotResult] = useState<ProcessingResultWithFile | null>(null);
   const queryClient = useQueryClient();
 
   // Fetch knowledge base stats
@@ -85,8 +89,8 @@ export default function Dashboard({ projectId }: DashboardProps) {
     setAnalyzeState({ phase: 'indexing', message: 'Indexing specifications...' });
     
     try {
-      // Always re-index to ensure latest specs are included
-      await indexKnowledgeBase(projectId, true);
+      // Index only new/changed files (not force), skip if already indexed
+      await indexKnowledgeBase(projectId, false);
       queryClient.invalidateQueries({ queryKey: ['kb-stats', projectId] });
       
       setAnalyzeState({ phase: 'processing', message: 'Analyzing documents...' });
@@ -332,6 +336,7 @@ export default function Dashboard({ projectId }: DashboardProps) {
               key={result.id} 
               result={result} 
               onViewDetails={() => setSelectedResult(result)}
+              onCoPilot={() => setCoPilotResult(result)}
             />
           ))}
         </div>
@@ -347,11 +352,26 @@ export default function Dashboard({ projectId }: DashboardProps) {
           }}
         />
       )}
+
+      {/* Co-Pilot Mode */}
+      {coPilotResult && (
+        <CoPilotMode
+          result={coPilotResult}
+          specFiles={specFiles}
+          projectId={projectId}
+          projectName={projectName}
+          onClose={() => setCoPilotResult(null)}
+          onSave={() => {
+            setCoPilotResult(null);
+            queryClient.invalidateQueries({ queryKey: ['results', projectId] });
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ResultCard({ result, onViewDetails }: { result: ProcessingResultWithFile; onViewDetails: () => void }) {
+function ResultCard({ result, onViewDetails, onCoPilot }: { result: ProcessingResultWithFile; onViewDetails: () => void; onCoPilot: () => void }) {
   const isRFI = result.document_type === 'rfi';
   const isTruncated = result.response_text && result.response_text.length > 300;
   const hasMoreRefs = result.spec_references && result.spec_references.length > 2;
@@ -420,17 +440,29 @@ function ResultCard({ result, onViewDetails }: { result: ProcessingResultWithFil
           <span className="mx-2">•</span>
           <span>{new Date(result.processed_date).toLocaleDateString()}</span>
         </div>
-        {(isTruncated || hasMoreRefs) && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={onViewDetails}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center"
+            onClick={onCoPilot}
+            className="text-sm text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1"
+            title="Open Co-Pilot mode for step-by-step drafting"
           >
-            View Full Response
-            <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
             </svg>
+            Co-Pilot
           </button>
-        )}
+          {(isTruncated || hasMoreRefs) && (
+            <button
+              onClick={onViewDetails}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center"
+            >
+              View Full
+              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

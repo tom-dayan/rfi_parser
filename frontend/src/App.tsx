@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import FolderConfig from './components/FolderConfig';
 import ProjectView from './components/ProjectView';
+import GlobalSearch from './components/GlobalSearch';
+import ChatInterface from './components/ChatInterface';
 import { getProjects } from './services/api';
 import type { ProjectWithStats } from './types';
 
@@ -16,6 +18,8 @@ const queryClient = new QueryClient({
 
 function AppContent() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   const { data: projects = [], isLoading: projectsLoading } = useQuery({
     queryKey: ['projects'],
@@ -30,8 +34,44 @@ function AppContent() {
     setSelectedProjectId(project.id);
   };
 
+  // Keyboard shortcut for search (Cmd/Ctrl + K)
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      setSearchOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId);
+
   return (
     <div className="min-h-screen bg-slate-50">
+      {/* Global Search Modal */}
+      <GlobalSearch
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelectFile={(file) => {
+          console.log('Selected file:', file);
+          // Could open file preview or navigate to it
+        }}
+      />
+
+      {/* Chat Sidebar */}
+      {chatOpen && (
+        <div className="fixed right-0 top-0 bottom-0 w-96 z-40 shadow-2xl">
+          <ChatInterface
+            projectId={selectedProjectId || undefined}
+            projectName={selectedProject?.name}
+            onClose={() => setChatOpen(false)}
+          />
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
@@ -50,6 +90,33 @@ function AppContent() {
                   Analyze RFIs and Submittals against specifications
                 </p>
               </div>
+            </div>
+
+            {/* Search and Chat buttons */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span>Search</span>
+                <kbd className="hidden sm:inline px-1.5 py-0.5 text-xs bg-slate-200 rounded">⌘K</kbd>
+              </button>
+              <button
+                onClick={() => setChatOpen(!chatOpen)}
+                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition ${
+                  chatOpen
+                    ? 'bg-purple-600 text-white'
+                    : 'text-slate-600 bg-slate-100 hover:bg-slate-200'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+                <span>Ask OLI</span>
+              </button>
             </div>
           </div>
         </div>

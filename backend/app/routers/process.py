@@ -440,7 +440,7 @@ def _get_ai_service():
         )
     elif settings.ai_provider == "claude":
         from ..services.ai.claude import ClaudeService
-        return ClaudeService(api_key=settings.claude_api_key)
+        return ClaudeService(api_key=settings.claude_api_key, model=settings.claude_model)
     elif settings.ai_provider == "gemini":
         from ..services.ai.gemini import GeminiService
         return GeminiService(

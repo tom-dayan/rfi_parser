@@ -235,3 +235,99 @@ export const browseDirectory = async (path?: string): Promise<BrowseResult> => {
   );
   return response.data;
 };
+
+// Chat API
+export interface ChatMessage {
+  content: string;
+  project_id?: number;
+  session_id?: string;
+}
+
+export interface ChatResponse {
+  content: string;
+  session_id: string;
+  sources: Array<{
+    filename: string;
+    section?: string;
+    path?: string;
+    relevance?: number;
+  }>;
+  timestamp: string;
+}
+
+export const sendChatMessage = async (message: ChatMessage): Promise<ChatResponse> => {
+  const response = await api.post<ChatResponse>('/api/chat/message', message);
+  return response.data;
+};
+
+export const getChatHistory = async (sessionId: string): Promise<{ messages: Array<{
+  role: string;
+  content: string;
+  timestamp: string;
+  sources?: Array<{ filename: string }>;
+}>}> => {
+  const response = await api.get(`/api/chat/history/${sessionId}`);
+  return response.data;
+};
+
+export const clearChatHistory = async (sessionId: string): Promise<void> => {
+  await api.delete(`/api/chat/history/${sessionId}`);
+};
+
+// Search API
+export interface SearchResult {
+  path: string;
+  filename: string;
+  extension?: string;
+  file_type?: string;
+  size_bytes?: number;
+  modified_at?: string;
+  project_name?: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+  total: number;
+  source: string;
+}
+
+export const searchFiles = async (params: {
+  q: string;
+  file_type?: string;
+  extension?: string;
+  project_id?: number;
+  limit?: number;
+}): Promise<SearchResponse> => {
+  const response = await api.get<SearchResponse>('/api/search', { params });
+  return response.data;
+};
+
+export const searchDrawings = async (params: {
+  q: string;
+  project_id?: number;
+  limit?: number;
+}): Promise<SearchResponse> => {
+  const response = await api.get<SearchResponse>('/api/search/drawings', { params });
+  return response.data;
+};
+
+export const getSearchContent = async (path: string, maxLength?: number): Promise<{
+  path: string;
+  filename: string;
+  content: string;
+  was_cached: boolean;
+}> => {
+  const response = await api.get('/api/search/content', {
+    params: { path, max_length: maxLength }
+  });
+  return response.data;
+};
+
+export const getSearchStats = async (): Promise<{
+  index: Record<string, unknown>;
+  cache: Record<string, unknown>;
+}> => {
+  const response = await api.get('/api/search/stats');
+  return response.data;
+};

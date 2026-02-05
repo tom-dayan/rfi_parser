@@ -87,7 +87,7 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
         }));
 
         try {
-          const indexResult = await indexKnowledgeBase(projectId, true);
+          const indexResult = await indexKnowledgeBase(projectId, false);
           setSetupState((prev) => ({
             ...prev,
             phase: 'complete',

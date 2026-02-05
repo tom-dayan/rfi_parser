@@ -26,7 +26,7 @@ def get_ai_service():
     elif settings.ai_provider == "claude":
         if not settings.claude_api_key:
             raise ValueError("Claude API key not configured")
-        return ClaudeService(api_key=settings.claude_api_key)
+        return ClaudeService(api_key=settings.claude_api_key, model=settings.claude_model)
     else:
         raise ValueError(f"Unknown AI provider: {settings.ai_provider}")
 

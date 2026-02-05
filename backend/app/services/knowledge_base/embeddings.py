@@ -56,22 +56,33 @@ class OllamaEmbeddings(EmbeddingService):
     def embed(self, text: str) -> list[float]:
         """Embed a single text string using Ollama."""
         # Truncate text if too long (nomic-embed-text has 8192 token limit)
-        # Rough estimate: 1 token ≈ 4 characters, so limit to ~30000 chars to be safe
-        max_chars = 30000
+        # Be conservative: ~3 chars per token, so limit to ~20000 chars
+        max_chars = 20000
         if len(text) > max_chars:
             text = text[:max_chars]
         
-        response = self._client.embeddings(
-            model=self._model,
-            prompt=text
-        )
-        embedding = response['embedding']
+        try:
+            response = self._client.embeddings(
+                model=self._model,
+                prompt=text
+            )
+            embedding = response['embedding']
 
-        # Cache dimension on first call
-        if self._dimension is None:
-            self._dimension = len(embedding)
+            # Cache dimension on first call
+            if self._dimension is None:
+                self._dimension = len(embedding)
 
-        return embedding
+            return embedding
+        except Exception as e:
+            # If embedding fails, try with even shorter text
+            if "context length" in str(e).lower() or "input length" in str(e).lower():
+                shorter_text = text[:5000]
+                response = self._client.embeddings(
+                    model=self._model,
+                    prompt=shorter_text
+                )
+                return response['embedding']
+            raise
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts."""
