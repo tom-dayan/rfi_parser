@@ -1086,15 +1086,21 @@ async def suggest_specs_from_file_paths(
 
 
 @router.get("/projects/{project_id}/spec-folder-tree")
-async def get_spec_folder_tree(
+def get_spec_folder_tree(
     project_id: int,
     db: Session = Depends(get_db)
 ):
     """
     Get the complete folder tree structure of the specs folder.
     Returns all files organized by folder for tree navigation.
+    
+    NOTE: This is a sync def (not async) so FastAPI runs it in a 
+    threadpool automatically, preventing event loop blocking on large folders.
     """
     import os
+    import time
+    
+    start_time = time.time()
     
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -1127,49 +1133,64 @@ async def get_spec_folder_tree(
         root_normalized = os.path.normpath(root).lower()
         
         # Filter out excluded directories by name or full path
-        def should_include_dir(d):
-            d_lower = d.lower()
-            if d_lower in exclude_folder_names:
-                return False
-            full_dir_path = os.path.normpath(os.path.join(root, d)).lower()
-            for excl_path in exclude_full_paths:
-                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + os.sep):
-                    return False
-            return True
+        dirs[:] = [
+            d for d in dirs
+            if d.lower() not in exclude_folder_names
+            and not any(
+                os.path.normpath(os.path.join(root, d)).lower() == ep
+                or os.path.normpath(os.path.join(root, d)).lower().startswith(ep + os.sep)
+                for ep in exclude_full_paths
+            )
+        ]
         
-        dirs[:] = [d for d in dirs if should_include_dir(d)]
+        # Check if current root should be skipped
+        skip_this = any(
+            root_normalized == ep or root_normalized.startswith(ep + os.sep)
+            for ep in exclude_full_paths
+        )
+        if skip_this:
+            continue
         
         rel_root = os.path.relpath(root, specs_folder)
         if rel_root == ".":
             rel_root = ""
         
-        # Check if current root should be skipped
-        skip_this = False
-        for excl_path in exclude_full_paths:
-            if root_normalized == excl_path or root_normalized.startswith(excl_path + os.sep):
-                skip_this = True
-                break
-        if skip_this:
-            continue
-        
         # Track folders
         if rel_root:
             folders_set.add(rel_root)
         
-        for filename in files:
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in spec_extensions:
-                full_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(full_path, specs_folder)
-                
-                all_files.append({
-                    "name": filename,
-                    "path": full_path,
-                    "relative_path": relative_path,
-                    "folder": rel_root,
-                    "extension": ext,
-                    "size": os.path.getsize(full_path)
-                })
+        # Use scandir for efficient stat access (avoids extra syscalls)
+        try:
+            with os.scandir(root) as entries:
+                for entry in entries:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    ext = os.path.splitext(entry.name)[1].lower()
+                    if ext not in spec_extensions:
+                        continue
+                    
+                    try:
+                        file_size = entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        file_size = 0
+                    
+                    full_path = entry.path
+                    relative_path = os.path.relpath(full_path, specs_folder)
+                    
+                    all_files.append({
+                        "name": entry.name,
+                        "path": full_path,
+                        "relative_path": relative_path,
+                        "folder": rel_root,
+                        "extension": ext,
+                        "size": file_size
+                    })
+        except OSError as e:
+            logger.warning(f"Error scanning directory {root}: {e}")
+            continue
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Spec folder tree: {len(all_files)} files, {len(folders_set)} folders in {elapsed:.2f}s")
     
     return {
         "specs_folder": specs_folder,

@@ -346,9 +346,10 @@ export default function RefineMode({
               </div>
 
               {isLoadingSpecs && (
-                <div className="flex items-center justify-center py-12">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-violet-600 mr-3" />
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-violet-600" />
                   <span className="text-slate-500">Loading specifications folder...</span>
+                  <span className="text-xs text-slate-400">This may take a moment for large project folders</span>
                 </div>
               )}
 
