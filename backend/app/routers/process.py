@@ -818,7 +818,7 @@ async def suggest_spec_files(
             ext = os.path.splitext(filename)[1].lower()
             if ext in spec_extensions:
                 full_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(full_path, specs_folder)
+                relative_path = os.path.relpath(full_path, specs_folder).replace("\\", "/")
                 spec_files.append({
                     "name": filename,
                     "path": full_path,
@@ -979,7 +979,7 @@ async def suggest_specs_from_file_paths(
             ext = os.path.splitext(filename)[1].lower()
             if ext in spec_extensions:
                 full_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(full_path, specs_folder)
+                relative_path = os.path.relpath(full_path, specs_folder).replace("\\", "/")
                 spec_files.append({
                     "name": filename,
                     "path": full_path,
@@ -1058,12 +1058,14 @@ async def suggest_specs_from_file_paths(
     folder_structure = {}
     
     for spec in spec_files:
-        rel_path = spec["relative_path"]
+        rel_path = spec["relative_path"].replace("\\", "/")
         folder = os.path.dirname(rel_path) if os.path.dirname(rel_path) else ""
+        # Normalize folder separators for cross-platform consistency
+        folder = folder.replace("\\", "/")
         
         # Build folder structure
         if folder:
-            parts = folder.replace("\\", "/").split("/")
+            parts = folder.split("/")
             current = folder_structure
             for part in parts:
                 if part not in current:
@@ -1072,6 +1074,7 @@ async def suggest_specs_from_file_paths(
         
         all_specs_with_folders.append({
             **spec,
+            "relative_path": rel_path,
             "folder": folder
         })
     
@@ -1085,14 +1088,23 @@ async def suggest_specs_from_file_paths(
     }
 
 
+# In-memory cache for spec folder trees (avoids re-walking large network folders)
+_spec_tree_cache: dict = {}  # { project_id: { "data": ..., "timestamp": ..., "specs_folder": ... } }
+_SPEC_TREE_CACHE_TTL = 300  # 5 minutes
+
+
 @router.get("/projects/{project_id}/spec-folder-tree")
 def get_spec_folder_tree(
     project_id: int,
+    refresh: bool = False,
     db: Session = Depends(get_db)
 ):
     """
     Get the complete folder tree structure of the specs folder.
     Returns all files organized by folder for tree navigation.
+    
+    Results are cached in memory for 5 minutes to avoid re-walking large folders.
+    Pass ?refresh=true to force a fresh scan.
     
     NOTE: This is a sync def (not async) so FastAPI runs it in a 
     threadpool automatically, preventing event loop blocking on large folders.
@@ -1100,15 +1112,27 @@ def get_spec_folder_tree(
     import os
     import time
     
-    start_time = time.time()
-    
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
     specs_folder = project.specs_folder_path
     if not specs_folder or not os.path.exists(specs_folder):
-        return {"error": "Specs folder not configured or not found", "tree": {}, "files": []}
+        return {"error": "Specs folder not configured or not found", "tree": {}, "files": [], "folders": []}
+    
+    # Check cache
+    now = time.time()
+    cached = _spec_tree_cache.get(project_id)
+    if (
+        not refresh
+        and cached
+        and cached["specs_folder"] == specs_folder
+        and (now - cached["timestamp"]) < _SPEC_TREE_CACHE_TTL
+    ):
+        logger.info(f"Spec folder tree: returning cached result for project {project_id} ({cached['data']['total_files']} files)")
+        return cached["data"]
+    
+    start_time = time.time()
     
     # Get exclude folders and normalize them
     exclude_folders = project.exclude_folders or []
@@ -1154,6 +1178,9 @@ def get_spec_folder_tree(
         rel_root = os.path.relpath(root, specs_folder)
         if rel_root == ".":
             rel_root = ""
+        else:
+            # Normalize to forward slashes for cross-platform consistency
+            rel_root = rel_root.replace("\\", "/")
         
         # Track folders
         if rel_root:
@@ -1175,7 +1202,7 @@ def get_spec_folder_tree(
                         file_size = 0
                     
                     full_path = entry.path
-                    relative_path = os.path.relpath(full_path, specs_folder)
+                    relative_path = os.path.relpath(full_path, specs_folder).replace("\\", "/")
                     
                     all_files.append({
                         "name": entry.name,
@@ -1192,12 +1219,21 @@ def get_spec_folder_tree(
     elapsed = time.time() - start_time
     logger.info(f"Spec folder tree: {len(all_files)} files, {len(folders_set)} folders in {elapsed:.2f}s")
     
-    return {
+    result = {
         "specs_folder": specs_folder,
         "total_files": len(all_files),
         "files": all_files,
         "folders": sorted(list(folders_set))
     }
+    
+    # Store in cache
+    _spec_tree_cache[project_id] = {
+        "data": result,
+        "timestamp": time.time(),
+        "specs_folder": specs_folder,
+    }
+    
+    return result
 
 
 @router.post("/projects/{project_id}/smart-analyze-from-paths")
