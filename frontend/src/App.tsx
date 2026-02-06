@@ -126,7 +126,7 @@ function AppContent() {
 
       {/* Header */}
       <header className="bg-white border-b border-stone-200 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             {/* Logo & Title */}
             <div className="flex items-center gap-4">
@@ -135,9 +135,9 @@ function AppContent() {
                 className="flex items-center gap-3 hover:opacity-80 transition"
               >
                 <img src="/olilogo.png" alt="OLI" className="w-10 h-10 rounded-xl object-contain" />
-                <div>
-                  <h1 className="text-lg font-semibold text-stone-900">OLILab</h1>
-                  <p className="text-xs text-stone-500">Design Research Workshop</p>
+                <div className="text-left">
+                  <h1 className="text-lg font-semibold text-stone-900 leading-tight">OLILab</h1>
+                  <p className="text-xs text-stone-500 leading-tight">Design Research Workshop</p>
                 </div>
               </button>
             </div>
