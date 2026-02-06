@@ -285,13 +285,13 @@ eventSource.onmessage = (event) => {
 | `get_file_content` | Get parsed text content of a file |
 | `get_file_metadata` | Get file metadata without parsing |
 
-#### OLI Knowledge Base Tools
+#### OLILab Tools
 
 These tools provide access to the OLI project data and AI analysis:
 
 | Tool | Description |
 |------|-------------|
-| `list_projects` | List all projects in the OLI Knowledge Base |
+| `list_projects` | List all projects in the OLILab |
 | `get_project_info` | Get detailed information about a specific project |
 | `get_rfi_context` | Get full context for an RFI/Submittal (content, analysis, spec references) |
 | `search_specs` | Search indexed specifications using semantic search |

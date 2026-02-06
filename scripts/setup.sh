@@ -1,12 +1,12 @@
 #!/bin/bash
-# OLI Knowledge Base - Setup Script for macOS/Linux
+# OLILab - Setup Script for macOS/Linux
 # This script installs all dependencies and configures the application
 
 set -e
 
 echo ""
 echo "╔════════════════════════════════════════════════╗"
-echo "║        OLI Knowledge Base - Setup              ║"
+echo "║        OLILab - Setup              ║"
 echo "║     Document Analysis & AI Assistant           ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
@@ -93,7 +93,7 @@ if [ ! -f "backend/.env" ]; then
     echo ""
     echo "📝 Creating configuration file..."
     cat > backend/.env << 'EOF'
-# OLI Knowledge Base Configuration
+# OLILab Configuration
 
 # AI Provider: ollama, claude, or gemini
 AI_PROVIDER=claude
@@ -125,13 +125,13 @@ cd "$PROJECT_ROOT"
 # Create start script
 cat > start.sh << 'EOF'
 #!/bin/bash
-# Start OLI Knowledge Base
+# Start OLILab
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 echo ""
-echo "🚀 Starting OLI Knowledge Base..."
+echo "🚀 Starting OLILab..."
 echo ""
 
 # Start backend
@@ -154,7 +154,7 @@ cd ..
 
 echo ""
 echo "╔════════════════════════════════════════════════╗"
-echo "║           OLI Knowledge Base Running           ║"
+echo "║           OLILab Running           ║"
 echo "╠════════════════════════════════════════════════╣"
 echo "║  Frontend: http://localhost:5173              ║"
 echo "║  Backend:  http://localhost:8000              ║"

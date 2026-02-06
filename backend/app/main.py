@@ -95,9 +95,9 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
-    title="RFI Processing Tool API",
+    title="OLILab API",
     description="API for processing RFIs against architectural specifications using local folders",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
 )
 
@@ -122,8 +122,8 @@ app.include_router(search.router)
 def root():
     """Root endpoint"""
     return {
-        "message": "RFI Processing Tool API",
-        "version": "2.1.0",
+        "message": "OLILab API",
+        "version": "2.2.0",
         "docs": "/docs",
         "ai_provider": settings.ai_provider,
         "shared_folders": [str(f) for f in settings.get_shared_folders()],

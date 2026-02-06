@@ -29,7 +29,7 @@ def get_oli_tools():
         Tool(
             name="list_projects",
             description=(
-                "List all projects in the OLI Knowledge Base system. "
+                "List all projects in OLILab. "
                 "Returns project names, document counts, and status."
             ),
             inputSchema={
@@ -175,7 +175,7 @@ async def _list_projects(arguments: dict[str, Any]) -> list[TextContent]:
         if not projects:
             return [TextContent(type="text", text="No projects found.")]
         
-        output = "OLI Knowledge Base Projects\n"
+        output = "OLILab Projects\n"
         output += "=" * 50 + "\n\n"
         
         for p in projects:

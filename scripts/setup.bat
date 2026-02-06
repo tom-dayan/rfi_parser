@@ -1,12 +1,12 @@
 @echo off
-REM OLI Knowledge Base - Setup Script for Windows
+REM OLILab - Setup Script for Windows
 REM This script installs all dependencies and configures the application
 
 setlocal EnableDelayedExpansion
 
 echo.
 echo ===================================================
-echo         OLI Knowledge Base - Setup
+echo         OLILab - Setup
 echo      Document Analysis ^& AI Assistant
 echo ===================================================
 echo.
@@ -87,7 +87,7 @@ if not exist "backend\.env" (
     echo.
     echo Creating configuration file...
     (
-        echo # OLI Knowledge Base Configuration
+        echo # OLILab Configuration
         echo.
         echo # AI Provider: ollama, claude, or gemini
         echo AI_PROVIDER=claude
@@ -125,12 +125,12 @@ echo.
 echo Creating start script...
 (
     echo @echo off
-    echo REM Start OLI Knowledge Base
+    echo REM Start OLILab
     echo.
     echo cd /d "%%~dp0"
     echo.
     echo echo.
-    echo echo Starting OLI Knowledge Base...
+    echo echo Starting OLILab...
     echo echo.
     echo.
     echo REM Start backend
@@ -146,7 +146,7 @@ echo Creating start script...
     echo.
     echo echo.
     echo echo ===================================================
-    echo echo           OLI Knowledge Base Running
+    echo echo           OLILab Running
     echo echo ===================================================
     echo echo.
     echo echo   Frontend: http://localhost:5173

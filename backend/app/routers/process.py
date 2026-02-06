@@ -609,6 +609,165 @@ def update_result(
     }
 
 
+@router.post("/results/{result_id}/refine")
+async def refine_result(
+    result_id: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Re-analyze an existing result with updated spec selections.
+    
+    Parses the original RFI and the newly-selected specs on-demand,
+    regenerates the AI response, and updates the existing result record.
+    
+    Expected request body:
+    {
+        "spec_file_paths": ["/path/to/spec1.pdf", "/path/to/spec2.pdf"],
+        "instructions": "Optional user instructions for the AI"
+    }
+    """
+    import os
+    
+    result = db.query(ProcessingResult).filter(ProcessingResult.id == result_id).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Result not found")
+    
+    spec_paths = request.get("spec_file_paths", [])
+    user_instructions = request.get("instructions", "").strip()
+    if not spec_paths:
+        raise HTTPException(status_code=400, detail="No specification files provided")
+    
+    # Determine the RFI file path
+    rfi_path = result.source_file_path
+    rfi_name = result.source_filename or "Unknown"
+    
+    # If path-based result doesn't have source_file_path, try getting it from the linked file
+    if not rfi_path and result.source_file_id:
+        source_file = db.query(ProjectFile).filter(ProjectFile.id == result.source_file_id).first()
+        if source_file:
+            rfi_path = source_file.file_path
+            rfi_name = source_file.filename
+    
+    if not rfi_path or not os.path.exists(rfi_path):
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Source RFI file not found at path: {rfi_path}"
+        )
+    
+    # Get AI service
+    ai_service = _get_ai_service()
+    if not ai_service:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+    
+    # Get parser registry for on-demand parsing
+    from ..services.parsers import get_parser_registry
+    parser_registry = get_parser_registry()
+    
+    # Parse the RFI file on-demand
+    try:
+        rfi_result_parsed = parser_registry.parse(rfi_path)
+        rfi_content = rfi_result_parsed.text_content or ""
+        if not rfi_result_parsed.success:
+            rfi_content = f"Error parsing RFI: {rfi_result_parsed.error}"
+            logger.warning(f"Refine: RFI parse failed for {rfi_name}: {rfi_result_parsed.error}")
+        elif not rfi_content.strip():
+            rfi_content = "[No text content could be extracted from this PDF]"
+            logger.warning(f"Refine: RFI parse returned empty text for {rfi_name}")
+        else:
+            logger.info(f"Refine: Parsed RFI {rfi_name}: {len(rfi_content)} chars extracted")
+    except Exception as e:
+        rfi_content = f"Error parsing RFI: {str(e)}"
+        logger.error(f"Refine: RFI parse exception for {rfi_name}: {e}", exc_info=True)
+    
+    # Parse each selected spec file on-demand
+    spec_contents = []
+    for spec_path in spec_paths:
+        if os.path.exists(spec_path):
+            try:
+                spec_result_parsed = parser_registry.parse(spec_path)
+                spec_text = spec_result_parsed.text_content or ""
+                if not spec_result_parsed.success:
+                    spec_text = f"Error parsing: {spec_result_parsed.error}"
+                    logger.warning(f"Refine: Spec parse failed for {os.path.basename(spec_path)}: {spec_result_parsed.error}")
+                else:
+                    logger.info(f"Refine: Parsed spec {os.path.basename(spec_path)}: {len(spec_text)} chars extracted")
+                spec_contents.append({
+                    "path": spec_path,
+                    "name": os.path.basename(spec_path),
+                    "content": spec_text[:50000] if spec_text else ""
+                })
+            except Exception as e:
+                logger.error(f"Refine: Spec parse exception for {os.path.basename(spec_path)}: {e}", exc_info=True)
+                spec_contents.append({
+                    "path": spec_path,
+                    "name": os.path.basename(spec_path),
+                    "content": f"Error parsing: {str(e)}"
+                })
+    
+    # Build spec context
+    spec_context = [
+        {
+            "text": s["content"][:20000],
+            "source": s["name"],
+            "section": s["name"],
+            "score": 1.0,
+        }
+        for s in spec_contents
+    ]
+    
+    # Determine document type
+    doc_type = result.document_type or "rfi"
+    
+    try:
+        # Build document content, appending user instructions if provided
+        document_content = rfi_content[:30000]
+        if user_instructions:
+            document_content += (
+                "\n\n--- ADDITIONAL INSTRUCTIONS FROM REVIEWER ---\n"
+                f"{user_instructions}\n"
+                "--- END OF INSTRUCTIONS ---\n"
+            )
+            logger.info(f"Refine: Including user instructions ({len(user_instructions)} chars)")
+        
+        # Generate new AI response
+        doc_response = await ai_service.process_document(
+            document_content=document_content,
+            document_type=doc_type,
+            spec_context=spec_context
+        )
+        
+        # Update the existing result record
+        result.response_text = doc_response.response_text
+        result.confidence = doc_response.confidence
+        result.consultant_type = doc_response.consultant_type
+        if doc_type == "submittal":
+            result.status = doc_response.status
+        result.spec_references = [
+            {"source_filename": s["name"], "text": "", "score": 1.0}
+            for s in spec_contents
+        ]
+        
+        db.commit()
+        db.refresh(result)
+        
+        logger.info(f"Refine: Successfully regenerated response for result {result_id}")
+        
+        return {
+            "id": result.id,
+            "response_text": result.response_text,
+            "confidence": result.confidence,
+            "consultant_type": result.consultant_type,
+            "status": result.status,
+            "spec_references": result.spec_references,
+            "processed_date": result.processed_date.isoformat() if result.processed_date else None,
+        }
+        
+    except Exception as e:
+        logger.error(f"Refine: AI error for result {result_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+
+
 @router.post("/projects/{project_id}/suggest-specs")
 async def suggest_spec_files(
     project_id: int,

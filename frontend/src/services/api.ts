@@ -297,6 +297,29 @@ export const updateResult = async (
   return response.data;
 };
 
+// Refine result: re-analyze with updated spec selections
+export interface RefineResultResponse {
+  id: number;
+  response_text: string;
+  confidence: number;
+  consultant_type?: string;
+  status?: string;
+  spec_references?: SpecReference[];
+  processed_date?: string;
+}
+
+export const refineResult = async (
+  resultId: number,
+  specFilePaths: string[],
+  instructions?: string
+): Promise<RefineResultResponse> => {
+  const response = await api.post<RefineResultResponse>(
+    `/api/results/${resultId}/refine`,
+    { spec_file_paths: specFilePaths, instructions }
+  );
+  return response.data;
+};
+
 // Utility API
 export const validateFolder = async (path: string): Promise<FolderValidation> => {
   const response = await api.post<FolderValidation>(

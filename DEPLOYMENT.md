@@ -1,6 +1,6 @@
-# RFI Processing Tool - Deployment Guide
+# OLILab - Deployment Guide
 
-This guide explains how to deploy the RFI Processing Tool for internal use within your firm.
+This guide explains how to deploy OLILab for internal use within your firm.
 
 ## Prerequisites
 

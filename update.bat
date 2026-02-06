@@ -1,8 +1,8 @@
 @echo off
-title OLI Knowledge Base - Updating...
+title OLILab - Updating...
 
 echo ============================================
-echo    OLI Knowledge Base - Update
+echo    OLILab - Update
 echo ============================================
 echo.
 

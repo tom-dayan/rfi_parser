@@ -138,7 +138,7 @@ function AppContent() {
                   <DocumentIcon />
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold text-stone-900">OLI Knowledge Base</h1>
+                  <h1 className="text-lg font-semibold text-stone-900">OLILab</h1>
                   <p className="text-xs text-stone-500">Project Documents & RFI Management</p>
                 </div>
               </button>
@@ -195,7 +195,7 @@ function AppContent() {
             {/* Welcome Section */}
             <div className="text-center py-8">
               <h2 className="text-2xl font-semibold text-stone-900 mb-2">
-                Welcome to OLI Knowledge Base
+                Welcome to OLILab
               </h2>
               <p className="text-stone-500 max-w-lg mx-auto">
                 Search across all project documents, analyze RFIs and submittals, 

@@ -1,4 +1,4 @@
-# OLI Knowledge Base
+# OLILab
 
 An intelligent knowledge base and document analysis system for architecture firms. Analyze RFIs, submittals, and specifications with AI-powered assistance.
 
