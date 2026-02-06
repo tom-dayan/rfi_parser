@@ -1077,22 +1077,39 @@ async def smart_analyze_from_paths(
         
         # Parse the RFI file on-demand
         try:
-            rfi_content = parser_registry.parse_file(rfi_path)
+            rfi_result = parser_registry.parse(rfi_path)
+            rfi_content = rfi_result.text_content or ""
+            if not rfi_result.success:
+                rfi_content = f"Error parsing RFI: {rfi_result.error}"
+                logger.warning(f"RFI parse failed for {rfi_name}: {rfi_result.error}")
+            elif not rfi_content.strip():
+                rfi_content = "[No text content could be extracted from this PDF]"
+                logger.warning(f"RFI parse returned empty text for {rfi_name}")
+            else:
+                logger.info(f"Parsed RFI {rfi_name}: {len(rfi_content)} chars extracted")
         except Exception as e:
             rfi_content = f"Error parsing RFI: {str(e)}"
+            logger.error(f"RFI parse exception for {rfi_name}: {e}", exc_info=True)
         
         # Parse each selected spec file on-demand
         spec_contents = []
         for spec_path in spec_paths:
             if os.path.exists(spec_path):
                 try:
-                    content = parser_registry.parse_file(spec_path)
+                    spec_result = parser_registry.parse(spec_path)
+                    spec_text = spec_result.text_content or ""
+                    if not spec_result.success:
+                        spec_text = f"Error parsing: {spec_result.error}"
+                        logger.warning(f"Spec parse failed for {os.path.basename(spec_path)}: {spec_result.error}")
+                    else:
+                        logger.info(f"Parsed spec {os.path.basename(spec_path)}: {len(spec_text)} chars extracted")
                     spec_contents.append({
                         "path": spec_path,
                         "name": os.path.basename(spec_path),
-                        "content": content[:50000] if content else ""  # Limit content size
+                        "content": spec_text[:50000] if spec_text else ""  # Limit content size
                     })
                 except Exception as e:
+                    logger.error(f"Spec parse exception for {os.path.basename(spec_path)}: {e}", exc_info=True)
                     spec_contents.append({
                         "path": spec_path,
                         "name": os.path.basename(spec_path),
