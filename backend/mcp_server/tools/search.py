@@ -149,6 +149,8 @@ def register_search_tools(server: Server) -> None:
 
 async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
     """Search for files matching criteria."""
+    import time
+    
     config = get_config()
 
     query = arguments.get("query", "*")
@@ -163,6 +165,7 @@ async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
 
     # Try metadata index first (faster for indexed folders)
     index = _get_metadata_index()
+    index_searched = False
     if index:
         try:
             indexed_results = index.search(
@@ -172,15 +175,17 @@ async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
                 modified_before=modified_before,
                 limit=max_results,
             )
+            index_searched = True
+            
+            # Filter by path if specified
+            if indexed_results and path_str:
+                path_prefix = str(Path(path_str).resolve())
+                indexed_results = [
+                    r for r in indexed_results
+                    if r["path"].startswith(path_prefix)
+                ]
+            
             if indexed_results:
-                # Filter by path if specified
-                if path_str:
-                    path_prefix = str(Path(path_str).resolve())
-                    indexed_results = [
-                        r for r in indexed_results
-                        if r["path"].startswith(path_prefix)
-                    ]
-                
                 # Convert to standard result format
                 results = [
                     {
@@ -196,6 +201,17 @@ async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
         except Exception:
             pass  # Fall back to filesystem walk
 
+    # If the metadata index was searched and returned nothing, return "not found"
+    # rather than falling back to a slow filesystem walk across network shares.
+    # Only fall back to filesystem walk if there was no index available at all.
+    if index_searched and not path_str:
+        return [TextContent(
+            type="text",
+            text=f"No files found matching: {query}\n\n"
+                 f"(Searched the metadata index. If files were recently added, "
+                 f"they may not be indexed yet. Try browsing the folder directly.)"
+        )]
+
     # Determine search roots
     if path_str:
         search_roots = [Path(path_str).resolve()]
@@ -210,8 +226,11 @@ async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
     # Build the search pattern
     pattern = _build_pattern(query)
 
-    # Search for files
+    # Search for files with a timeout to prevent hanging on network shares
+    WALK_TIMEOUT_SECONDS = 30
     results = []
+    timed_out = False
+    start_time = time.time()
 
     for root in search_roots:
         if not root.exists():
@@ -221,12 +240,24 @@ async def _search_files(arguments: dict[str, Any]) -> list[TextContent]:
             results.append(match)
             if len(results) >= max_results:
                 break
+            # Check timeout every 10 results to avoid checking too often
+            if len(results) % 10 == 0 and (time.time() - start_time) > WALK_TIMEOUT_SECONDS:
+                timed_out = True
+                break
 
-        if len(results) >= max_results:
+        if len(results) >= max_results or timed_out:
             break
 
     # Format results
-    return _format_search_results(query, results, max_results)
+    formatted = _format_search_results(query, results, max_results)
+    if timed_out and formatted:
+        elapsed = int(time.time() - start_time)
+        formatted[0] = TextContent(
+            type="text",
+            text=formatted[0].text + f"\n\n(Search stopped after {elapsed}s due to timeout. "
+                 f"Try narrowing your search with a specific path or file type.)"
+        )
+    return formatted
 
 
 async def _search_drawings(arguments: dict[str, Any]) -> list[TextContent]:

@@ -164,7 +164,7 @@ async def _browse_folder(arguments: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=result)]
 
 
-async def _list_shared_roots() -> list[TextContent]:
+async def _list_shared_roots(arguments: dict[str, Any] | None = None) -> list[TextContent]:
     """List configured shared folder roots."""
     config = get_config()
 

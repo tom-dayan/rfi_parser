@@ -102,6 +102,9 @@ def _register_all_tools(server: Server) -> None:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         """Route tool calls to the appropriate handler."""
+        import logging
+        logger = logging.getLogger("mcp_server")
+
         # Import handlers
         from mcp_server.tools.browse import _browse_folder, _list_shared_roots
         from mcp_server.tools.search import _search_files, _search_drawings
@@ -120,7 +123,14 @@ def _register_all_tools(server: Server) -> None:
 
         handler = handlers.get(name)
         if handler:
-            return await handler(arguments)
+            try:
+                return await handler(arguments)
+            except asyncio.CancelledError:
+                logger.warning(f"Tool call '{name}' was cancelled by client")
+                return [TextContent(type="text", text=f"Tool call '{name}' was cancelled.")]
+            except Exception as e:
+                logger.error(f"Error in tool '{name}': {e}", exc_info=True)
+                return [TextContent(type="text", text=f"Error running '{name}': {str(e)}")]
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
