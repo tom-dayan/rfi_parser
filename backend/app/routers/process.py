@@ -1,11 +1,13 @@
 """Processing router for RFIs and Submittals using RAG-based retrieval."""
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import json
+import logging
+from datetime import datetime
+from typing import Optional, Generator
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional, Generator
-from datetime import datetime
-import logging
-import json
 
 from ..database import get_db
 from ..models import Project, ProjectFile, ProcessingResult
@@ -579,6 +581,502 @@ def update_result(
             "content_type": source_file.content_type,
         } if source_file else None
     }
+
+
+@router.post("/projects/{project_id}/suggest-specs")
+async def suggest_spec_files(
+    project_id: int,
+    rfi_file_ids: list[int] = Query(..., description="List of RFI file IDs to analyze"),
+    db: Session = Depends(get_db)
+):
+    """
+    AI-assisted spec discovery: Analyze RFI content and suggest relevant spec files.
+    
+    This is a FAST endpoint - it does NOT parse spec files.
+    It uses the RFI content and filename matching to suggest relevant specs.
+    
+    Args:
+        project_id: The project ID
+        rfi_file_ids: List of RFI file IDs to analyze
+    
+    Returns:
+        List of suggested spec files for each RFI
+    """
+    import os
+    import re
+    from collections import Counter
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Get the RFI files
+    rfi_files = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.id.in_(rfi_file_ids)
+    ).all()
+    
+    if not rfi_files:
+        raise HTTPException(status_code=400, detail="No RFI files found")
+    
+    # Get all spec files from filesystem (fast - no parsing)
+    specs_folder = project.specs_folder_path
+    if not specs_folder or not os.path.exists(specs_folder):
+        return {"suggestions": [], "error": "Specs folder not found"}
+    
+    # Collect all spec files
+    spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
+    spec_files = []
+    
+    for root, _, files in os.walk(specs_folder):
+        for filename in files:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in spec_extensions:
+                full_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(full_path, specs_folder)
+                spec_files.append({
+                    "name": filename,
+                    "path": full_path,
+                    "relative_path": relative_path,
+                    "extension": ext
+                })
+    
+    # Analyze each RFI and suggest specs
+    suggestions = []
+    
+    for rfi in rfi_files:
+        # Extract keywords from RFI content and filename
+        rfi_content = rfi.content_text or rfi.filename
+        
+        # Use question extractor for better keyword extraction
+        extracted = extract_question(rfi_content, rfi.filename)
+        
+        # Combine all search terms
+        search_terms = []
+        if extracted.keywords:
+            search_terms.extend(extracted.keywords)
+        if extracted.spec_sections:
+            search_terms.extend(extracted.spec_sections)
+        if extracted.drawing_references:
+            search_terms.extend(extracted.drawing_references)
+        
+        # Add extracted terms from RFI title
+        if extracted.rfi_title:
+            title_words = re.findall(r'\b\w{4,}\b', extracted.rfi_title.lower())
+            search_terms.extend(title_words)
+        
+        # Score each spec file
+        scored_specs = []
+        for spec in spec_files:
+            score = _score_spec_relevance(
+                spec["name"], 
+                spec["relative_path"],
+                search_terms,
+                extracted
+            )
+            if score > 0:
+                scored_specs.append({
+                    **spec,
+                    "relevance_score": score,
+                    "matched_terms": _get_matched_terms(spec["name"], search_terms)
+                })
+        
+        # Sort by score and take top suggestions
+        scored_specs.sort(key=lambda x: x["relevance_score"], reverse=True)
+        top_specs = scored_specs[:15]  # Top 15 suggestions
+        
+        suggestions.append({
+            "rfi_id": rfi.id,
+            "rfi_filename": rfi.filename,
+            "rfi_title": extracted.rfi_title,
+            "extracted_keywords": extracted.keywords[:10],
+            "spec_references": extracted.spec_sections,
+            "suggested_specs": top_specs,
+            "total_specs_found": len(spec_files)
+        })
+    
+    return {
+        "suggestions": suggestions,
+        "project_id": project_id,
+        "specs_folder": specs_folder,
+        "total_spec_files": len(spec_files)
+    }
+
+
+@router.post("/projects/{project_id}/smart-analyze")
+async def smart_analyze_documents(
+    project_id: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Smart Analysis: Analyze RFIs using user-selected spec files (on-demand parsing).
+    
+    This parses ONLY the spec files the user selected, then generates responses.
+    
+    Expected request body:
+    {
+        "analyses": [
+            {
+                "rfi_file_id": 123,
+                "spec_file_paths": ["/path/to/spec1.pdf", "/path/to/spec2.pdf"]
+            }
+        ]
+    }
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    analyses = request.get("analyses", [])
+    if not analyses:
+        raise HTTPException(status_code=400, detail="No analyses specified")
+    
+    # Get AI service
+    ai_service = _get_ai_service()
+    
+    # Get parser registry for on-demand parsing
+    from ..services.parsers import get_parser_registry
+    parser_registry = get_parser_registry()
+    
+    results = []
+    
+    for analysis in analyses:
+        rfi_file_id = analysis.get("rfi_file_id")
+        spec_paths = analysis.get("spec_file_paths", [])
+        
+        # Get the RFI file
+        rfi_file = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.id == rfi_file_id
+        ).first()
+        
+        if not rfi_file:
+            results.append({
+                "rfi_file_id": rfi_file_id,
+                "success": False,
+                "error": "RFI file not found"
+            })
+            continue
+        
+        # Parse the selected spec files ON-DEMAND
+        parsed_specs = []
+        for spec_path in spec_paths[:10]:  # Limit to 10 spec files
+            if not os.path.exists(spec_path):
+                continue
+            
+            try:
+                parse_result = parser_registry.parse(spec_path)
+                if parse_result.success and parse_result.text_content:
+                    # Truncate content for context
+                    content = parse_result.text_content[:4000]
+                    parsed_specs.append({
+                        "source": os.path.basename(spec_path),
+                        "path": spec_path,
+                        "text": content,
+                        "score": 1.0  # User-selected so high relevance
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to parse spec {spec_path}: {e}")
+                continue
+        
+        if not parsed_specs:
+            results.append({
+                "rfi_file_id": rfi_file_id,
+                "rfi_filename": rfi_file.filename,
+                "success": False,
+                "error": "No spec files could be parsed"
+            })
+            continue
+        
+        try:
+            # Get RFI content
+            rfi_content = rfi_file.content_text or f"[Document: {rfi_file.filename}]"
+            doc_type = rfi_file.content_type or "rfi"
+            
+            # Extract question info
+            extracted = extract_question(rfi_content, rfi_file.filename)
+            enhanced_content = _build_enhanced_content(rfi_content, extracted)
+            
+            # Generate response using AI
+            ai_response = await ai_service.process_document(
+                document_content=enhanced_content,
+                document_type=doc_type,
+                spec_context=parsed_specs
+            )
+            
+            # Delete existing result if any
+            db.query(ProcessingResult).filter(
+                ProcessingResult.source_file_id == rfi_file_id
+            ).delete()
+            
+            # Create new result
+            db_result = ProcessingResult(
+                project_id=project_id,
+                source_file_id=rfi_file.id,
+                document_type=doc_type,
+                response_text=ai_response.response_text,
+                status=ai_response.status if doc_type == 'submittal' else None,
+                consultant_type=ai_response.consultant_type,
+                confidence=ai_response.confidence,
+                spec_references=[
+                    {
+                        "source_filename": spec["source"],
+                        "text": spec["text"][:500],  # First 500 chars as preview
+                        "score": spec["score"]
+                    }
+                    for spec in parsed_specs[:5]
+                ]
+            )
+            db.add(db_result)
+            db.commit()
+            db.refresh(db_result)
+            
+            results.append({
+                "rfi_file_id": rfi_file_id,
+                "rfi_filename": rfi_file.filename,
+                "success": True,
+                "result_id": db_result.id,
+                "response_preview": ai_response.response_text[:200] + "..." if len(ai_response.response_text) > 200 else ai_response.response_text,
+                "confidence": ai_response.confidence,
+                "specs_used": [os.path.basename(p) for p in spec_paths if os.path.exists(p)]
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in smart analysis for {rfi_file.filename}: {e}")
+            results.append({
+                "rfi_file_id": rfi_file_id,
+                "rfi_filename": rfi_file.filename,
+                "success": False,
+                "error": str(e)
+            })
+    
+    return {
+        "project_id": project_id,
+        "results": results,
+        "total_processed": len(results),
+        "successful": sum(1 for r in results if r.get("success"))
+    }
+
+
+@router.post("/projects/{project_id}/smart-analyze-stream")
+async def smart_analyze_stream(
+    project_id: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Smart Analysis with SSE streaming for progress updates.
+    Shows real-time progress as specs are parsed and analyzed.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    analyses = request.get("analyses", [])
+    if not analyses:
+        raise HTTPException(status_code=400, detail="No analyses specified")
+    
+    # Pre-load RFI data
+    rfi_ids = [a.get("rfi_file_id") for a in analyses]
+    rfi_files = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.id.in_(rfi_ids)
+    ).all()
+    rfi_map = {f.id: f for f in rfi_files}
+    
+    def generate_events() -> Generator[str, None, None]:
+        import asyncio
+        from ..database import SessionLocal
+        from ..services.parsers import get_parser_registry
+        
+        gen_db = SessionLocal()
+        parser_registry = get_parser_registry()
+        ai_service = _get_ai_service()
+        
+        total_analyses = len(analyses)
+        completed = 0
+        
+        try:
+            # Start event
+            start_msg = f'Starting smart analysis for {total_analyses} document(s)...'
+            yield f"data: {json.dumps({'event_type': 'start', 'total': total_analyses, 'message': start_msg})}\n\n"
+            
+            for idx, analysis in enumerate(analyses):
+                rfi_file_id = analysis.get("rfi_file_id")
+                spec_paths = analysis.get("spec_file_paths", [])
+                
+                rfi = rfi_map.get(rfi_file_id)
+                if not rfi:
+                    error_msg = f'RFI file {rfi_file_id} not found'
+                    yield f"data: {json.dumps({'event_type': 'error', 'rfi_id': rfi_file_id, 'message': error_msg})}\n\n"
+                    continue
+                
+                # Progress: parsing specs
+                parse_msg = f'Parsing {len(spec_paths)} spec file(s) for {rfi.filename}...'
+                yield f"data: {json.dumps({'event_type': 'parsing', 'rfi_id': rfi_file_id, 'rfi_filename': rfi.filename, 'spec_count': len(spec_paths), 'current_index': idx + 1, 'total': total_analyses, 'message': parse_msg})}\n\n"
+                
+                # Parse specs
+                parsed_specs = []
+                for spec_idx, spec_path in enumerate(spec_paths[:10]):
+                    if not os.path.exists(spec_path):
+                        continue
+                    
+                    spec_name = os.path.basename(spec_path)
+                    spec_parse_msg = f'Parsing: {spec_name} ({spec_idx + 1}/{len(spec_paths)})'
+                    yield f"data: {json.dumps({'event_type': 'parsing_spec', 'spec_name': spec_name, 'spec_index': spec_idx + 1, 'spec_total': len(spec_paths), 'message': spec_parse_msg})}\n\n"
+                    
+                    try:
+                        parse_result = parser_registry.parse(spec_path)
+                        if parse_result.success and parse_result.text_content:
+                            parsed_specs.append({
+                                "source": spec_name,
+                                "path": spec_path,
+                                "text": parse_result.text_content[:4000],
+                                "score": 1.0
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to parse spec {spec_path}: {e}")
+                
+                if not parsed_specs:
+                    no_specs_msg = f'No spec files could be parsed for {rfi.filename}'
+                    yield f"data: {json.dumps({'event_type': 'warning', 'rfi_id': rfi_file_id, 'message': no_specs_msg})}\n\n"
+                    continue
+                
+                # Progress: generating response
+                gen_msg = f'Generating response for {rfi.filename}...'
+                yield f"data: {json.dumps({'event_type': 'generating', 'rfi_id': rfi_file_id, 'rfi_filename': rfi.filename, 'specs_parsed': len(parsed_specs), 'message': gen_msg})}\n\n"
+                
+                try:
+                    # Get RFI content
+                    rfi_content = rfi.content_text or f"[Document: {rfi.filename}]"
+                    doc_type = rfi.content_type or "rfi"
+                    
+                    # Generate response
+                    extracted = extract_question(rfi_content, rfi.filename)
+                    enhanced_content = _build_enhanced_content(rfi_content, extracted)
+                    
+                    loop = asyncio.new_event_loop()
+                    ai_response = loop.run_until_complete(
+                        ai_service.process_document(
+                            document_content=enhanced_content,
+                            document_type=doc_type,
+                            spec_context=parsed_specs
+                        )
+                    )
+                    loop.close()
+                    
+                    # Save result
+                    gen_db.query(ProcessingResult).filter(
+                        ProcessingResult.source_file_id == rfi_file_id
+                    ).delete()
+                    
+                    db_result = ProcessingResult(
+                        project_id=project_id,
+                        source_file_id=rfi.id,
+                        document_type=doc_type,
+                        response_text=ai_response.response_text,
+                        status=ai_response.status if doc_type == 'submittal' else None,
+                        consultant_type=ai_response.consultant_type,
+                        confidence=ai_response.confidence,
+                        spec_references=[
+                            {
+                                "source_filename": spec["source"],
+                                "text": spec["text"][:500],
+                                "score": spec["score"]
+                            }
+                            for spec in parsed_specs[:5]
+                        ]
+                    )
+                    gen_db.add(db_result)
+                    gen_db.commit()
+                    gen_db.refresh(db_result)
+                    
+                    completed += 1
+                    
+                    complete_msg = f'Completed analysis for {rfi.filename}'
+                    yield f"data: {json.dumps({'event_type': 'completed', 'rfi_id': rfi_file_id, 'rfi_filename': rfi.filename, 'result_id': db_result.id, 'confidence': ai_response.confidence, 'current_index': idx + 1, 'total': total_analyses, 'message': complete_msg})}\n\n"
+                    
+                except Exception as e:
+                    error_msg = f'Error analyzing {rfi.filename}: {str(e)}'
+                    yield f"data: {json.dumps({'event_type': 'error', 'rfi_id': rfi_file_id, 'error': str(e), 'message': error_msg})}\n\n"
+            
+            # Final event
+            final_msg = f'Smart analysis complete! Processed {completed} of {total_analyses} documents.'
+            yield f"data: {json.dumps({'event_type': 'done', 'completed': completed, 'total': total_analyses, 'message': final_msg})}\n\n"
+            
+        except Exception as e:
+            err_msg = f'Analysis failed: {str(e)}'
+            yield f"data: {json.dumps({'event_type': 'fatal_error', 'error': str(e), 'message': err_msg})}\n\n"
+            gen_db.rollback()
+        finally:
+            gen_db.close()
+    
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+def _score_spec_relevance(filename: str, relative_path: str, search_terms: list, extracted) -> float:
+    """Score how relevant a spec file is to an RFI based on filename matching."""
+    import re
+    
+    score = 0.0
+    filename_lower = filename.lower()
+    path_lower = relative_path.lower()
+    
+    # Check for spec section matches (e.g., "Section 08 71 00" -> look for "087100" or "08 71 00")
+    if extracted.spec_sections:
+        for section in extracted.spec_sections:
+            # Normalize section number
+            section_clean = re.sub(r'[\s\-_]', '', section.lower())
+            filename_clean = re.sub(r'[\s\-_]', '', filename_lower)
+            
+            if section_clean in filename_clean or section_clean in path_lower.replace('\\', '/'):
+                score += 5.0  # Strong match for spec section
+    
+    # Check for keyword matches
+    for term in search_terms:
+        term_lower = term.lower()
+        if len(term_lower) < 3:
+            continue
+        
+        if term_lower in filename_lower:
+            score += 2.0  # Direct filename match
+        elif term_lower in path_lower:
+            score += 1.0  # Path match
+    
+    # Bonus for common spec patterns
+    spec_patterns = [
+        r'\d{2}\s?\d{2}\s?\d{2}',  # CSI spec numbers like "08 71 00"
+        r'spec',
+        r'section',
+        r'div\d+',  # Division references
+    ]
+    
+    for pattern in spec_patterns:
+        if re.search(pattern, filename_lower):
+            score += 0.5
+    
+    return score
+
+
+def _get_matched_terms(filename: str, search_terms: list) -> list:
+    """Return which search terms matched in the filename."""
+    filename_lower = filename.lower()
+    matched = []
+    
+    for term in search_terms:
+        if term.lower() in filename_lower and term not in matched:
+            matched.append(term)
+    
+    return matched[:5]  # Limit to 5
 
 
 def _build_enhanced_content(doc_content: str, extracted) -> str:

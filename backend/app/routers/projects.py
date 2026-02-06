@@ -137,6 +137,111 @@ def discover_projects_endpoint(
     }
 
 
+@router.get("/{project_id}/browse")
+def browse_project_folder(
+    project_id: int,
+    folder_type: str = "rfi",
+    recursive: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Browse files in a project folder WITHOUT parsing content.
+    This is a fast, lightweight listing directly from the filesystem.
+    
+    Args:
+        project_id: The project ID
+        folder_type: 'rfi', 'submittal', or 'spec'
+        recursive: Whether to include subdirectories
+    
+    Returns:
+        List of files with basic metadata (no content parsing)
+    """
+    from typing import Literal
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Map folder type to path
+    if folder_type in ("rfi", "submittal"):
+        folder_path = project.rfi_folder_path
+    elif folder_type == "spec":
+        folder_path = project.specs_folder_path
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid folder_type: {folder_type}")
+    
+    if not folder_path or not os.path.exists(folder_path):
+        return {
+            "files": [],
+            "folder": folder_path,
+            "folder_type": folder_type,
+            "total": 0,
+            "error": "Folder does not exist" if folder_path else "Folder not configured"
+        }
+    
+    # Supported file extensions for documents
+    doc_extensions = {'.pdf', '.docx', '.doc', '.txt', '.xlsx', '.xls'}
+    
+    files = []
+    try:
+        if recursive:
+            # Walk directory tree
+            for root, dirs, filenames in os.walk(folder_path):
+                for filename in filenames:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in doc_extensions:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            stat = os.stat(file_path)
+                            files.append({
+                                "name": filename,
+                                "path": file_path,
+                                "relative_path": os.path.relpath(file_path, folder_path),
+                                "size": stat.st_size,
+                                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                "extension": ext
+                            })
+                        except OSError:
+                            continue
+        else:
+            # Single directory only
+            for entry in os.scandir(folder_path):
+                if entry.is_file():
+                    ext = os.path.splitext(entry.name)[1].lower()
+                    if ext in doc_extensions:
+                        try:
+                            stat = entry.stat()
+                            files.append({
+                                "name": entry.name,
+                                "path": entry.path,
+                                "relative_path": entry.name,
+                                "size": stat.st_size,
+                                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                "extension": ext
+                            })
+                        except OSError:
+                            continue
+        
+        # Sort by name
+        files.sort(key=lambda x: x["name"].lower())
+        
+    except PermissionError as e:
+        return {
+            "files": [],
+            "folder": folder_path,
+            "folder_type": folder_type,
+            "total": 0,
+            "error": f"Permission denied: {str(e)}"
+        }
+    
+    return {
+        "files": files,
+        "folder": folder_path,
+        "folder_type": folder_type,
+        "total": len(files)
+    }
+
+
 @router.get("/{project_id}", response_model=ProjectWithStats)
 def get_project(project_id: int, db: Session = Depends(get_db)):
     """Get a project by ID with stats"""

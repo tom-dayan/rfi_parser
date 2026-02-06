@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getProject } from '../services/api';
 import FileExplorer from './FileExplorer';
 import Dashboard from './Dashboard';
+import SmartAnalysis from './SmartAnalysis';
 
 interface ProjectViewProps {
   projectId: number;
@@ -10,7 +11,8 @@ interface ProjectViewProps {
 }
 
 export default function ProjectView({ projectId, onBack }: ProjectViewProps) {
-  const [activeTab, setActiveTab] = useState<'files' | 'results'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'smart' | 'results'>('files');
+  const [showSmartAnalysis, setShowSmartAnalysis] = useState(false);
 
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
@@ -75,6 +77,17 @@ export default function ProjectView({ projectId, onBack }: ProjectViewProps) {
               onClick={() => setActiveTab('files')}
             />
             <TabButton
+              label="Smart Analysis"
+              icon={
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+              }
+              active={activeTab === 'smart'}
+              onClick={() => setShowSmartAnalysis(true)}
+              badge="New"
+            />
+            <TabButton
               label="Results"
               icon={
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -91,6 +104,16 @@ export default function ProjectView({ projectId, onBack }: ProjectViewProps) {
       {/* Tab Content */}
       {activeTab === 'files' && <FileExplorer projectId={projectId} />}
       {activeTab === 'results' && <Dashboard projectId={projectId} projectName={project?.name} />}
+      
+      {/* Smart Analysis Modal */}
+      {showSmartAnalysis && (
+        <SmartAnalysis
+          projectId={projectId}
+          projectName={project?.name}
+          onComplete={() => setActiveTab('results')}
+          onClose={() => setShowSmartAnalysis(false)}
+        />
+      )}
     </div>
   );
 }
@@ -100,11 +123,13 @@ function TabButton({
   icon,
   active,
   onClick,
+  badge,
 }: {
   label: string;
   icon: React.ReactNode;
   active: boolean;
   onClick: () => void;
+  badge?: string;
 }) {
   return (
     <button
@@ -117,6 +142,11 @@ function TabButton({
     >
       {icon}
       {label}
+      {badge && (
+        <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-primary-500 text-white rounded-full">
+          {badge}
+        </span>
+      )}
     </button>
   );
 }

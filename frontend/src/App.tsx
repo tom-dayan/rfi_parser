@@ -103,6 +103,23 @@ function AppContent() {
             projectId={selectedProjectId || undefined}
             projectName={selectedProject?.name}
             onClose={() => setChatOpen(false)}
+            onAction={(action) => {
+              // Handle chat actions
+              if (action.action_type === 'smart_analysis' && selectedProjectId) {
+                setChatOpen(false);
+                // Will be handled by ProjectView's SmartAnalysis
+              } else if (action.action_type === 'navigate') {
+                const path = action.params?.path as string;
+                if (path === '/projects') {
+                  setSelectedProjectId(null);
+                } else if (path === '/settings') {
+                  setShowNewProject(true);
+                }
+              } else if (action.action_type === 'find_specs' || action.action_type === 'browse_files') {
+                // Close chat, user can use the file browser
+                setChatOpen(false);
+              }
+            }}
           />
         </div>
       )}

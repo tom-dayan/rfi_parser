@@ -5,6 +5,7 @@ An intelligent knowledge base and document analysis system for architecture firm
 ## Features
 
 ### Document Analysis
+- **Smart Analysis**: AI-assisted spec discovery - select RFIs, AI finds relevant specs, you approve, and get quality responses (no pre-indexing required!)
 - **AI-Powered RFI/Submittal Analysis**: Automatically analyze documents against project specifications
 - **Smart Response Generation**: Draft responses with relevant spec references
 - **Co-Pilot Mode**: Interactive AI assistant for refining responses
@@ -181,10 +182,22 @@ Frontend will be running at [http://localhost:5173](http://localhost:5173)
 
 ## Usage
 
-1. **Create a Project**: Enter a project name and configure your RFI, Submittal, and Specs folder paths
-2. **Scan & Index**: Click "Scan & Index" to discover files and build the knowledge base from your specifications
-3. **Process Documents**: Go to the Results tab and click "Process Documents" to analyze RFIs and Submittals against specs
-4. **Review Results**: View AI responses with specification references and relevance scores
+### Smart Analysis (Recommended - No Pre-Indexing!)
+
+1. **Create a Project**: Enter a project name and configure your RFI/Submittal and Specs folder paths
+2. **Open Project**: Click on your project from the dashboard
+3. **Click "Smart Analysis"** (in the project header tabs)
+4. **Select Documents**: Choose which RFIs/Submittals you want to analyze
+5. **Review AI Suggestions**: AI automatically finds relevant spec files for each document
+6. **Approve & Analyze**: Adjust spec selections if needed, then click "Start Analysis"
+7. **Use Co-Pilot**: Click "Co-Pilot" on any result to refine the response with AI assistance
+
+### Traditional Workflow
+
+1. **Create a Project**: Enter a project name and configure your folder paths
+2. **Scan & Index**: Click "Scan & Index" to discover files and build the knowledge base
+3. **Process Documents**: Go to the Results tab and click "Process Documents"
+4. **Review Results**: View AI responses with specification references
 5. **Filter Results**: Filter by document type (RFI/Submittal) or status
 
 ## Switching AI Providers
@@ -343,6 +356,37 @@ rm rfi_parser.db
 **Problem**: "Failed to parse PDF"
 
 **Solution**: Ensure your PDF is not password-protected and is a valid PDF file. Try converting to DOCX or plain text.
+
+### OCR Issues (Windows)
+
+**Problem**: "OCR failed - tesseract is not installed" or "poppler is not installed"
+
+**Solution**: Install both Poppler and Tesseract:
+
+```powershell
+# Run PowerShell as Administrator
+choco install poppler
+choco install tesseract
+
+# Or download manually:
+# Poppler: https://github.com/osber/poppler/releases
+# Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+
+# Restart your terminal/IDE after installation
+```
+
+Make sure both are in your PATH by testing:
+```cmd
+pdftoppm -v
+tesseract --version
+```
+
+### OCR Issues (macOS)
+
+**Solution**:
+```bash
+brew install poppler tesseract
+```
 
 ## Future Enhancements
 

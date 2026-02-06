@@ -424,3 +424,210 @@ export const getSearchStats = async (): Promise<{
   const response = await api.get('/api/search/stats');
   return response.data;
 };
+
+// Smart Analysis API
+
+export interface BrowseFile {
+  name: string;
+  path: string;
+  relative_path: string;
+  size: number;
+  modified: string;
+  extension: string;
+}
+
+export interface BrowseFolderResponse {
+  files: BrowseFile[];
+  folder: string;
+  folder_type: string;
+  total: number;
+  error?: string;
+}
+
+export const browseProjectFolder = async (
+  projectId: number,
+  folderType: 'rfi' | 'submittal' | 'spec' = 'rfi',
+  recursive: boolean = true
+): Promise<BrowseFolderResponse> => {
+  const response = await api.get<BrowseFolderResponse>(
+    `/api/projects/${projectId}/browse`,
+    { params: { folder_type: folderType, recursive } }
+  );
+  return response.data;
+};
+
+export interface SpecSuggestion {
+  name: string;
+  path: string;
+  relative_path: string;
+  relevance_score: number;
+  matched_terms: string[];
+  extension: string;
+  size?: number;
+  modified?: string;
+}
+
+export interface RfiSpecSuggestions {
+  rfi_id: number;
+  rfi_filename: string;
+  rfi_title: string | null;
+  extracted_keywords: string[];
+  spec_references: string[];
+  suggested_specs: SpecSuggestion[];
+  total_specs_found: number;
+}
+
+export interface SuggestSpecsResponse {
+  suggestions: RfiSpecSuggestions[];
+  project_id: number;
+  specs_folder: string;
+  total_spec_files: number;
+}
+
+export const suggestSpecs = async (
+  projectId: number,
+  rfiFileIds: number[]
+): Promise<SuggestSpecsResponse> => {
+  // Send rfi_file_ids as query params (FastAPI expects list as repeated params)
+  const params = new URLSearchParams();
+  rfiFileIds.forEach(id => params.append('rfi_file_ids', String(id)));
+  
+  const response = await api.post<SuggestSpecsResponse>(
+    `/api/projects/${projectId}/suggest-specs?${params.toString()}`,
+    null
+  );
+  return response.data;
+};
+
+export interface SmartAnalysisRequest {
+  analyses: Array<{
+    rfi_file_id: number;
+    spec_file_paths: string[];
+  }>;
+}
+
+export interface SmartAnalysisResult {
+  rfi_file_id: number;
+  rfi_filename: string;
+  success: boolean;
+  result_id?: number;
+  response_preview?: string;
+  confidence?: number;
+  specs_used?: string[];
+  error?: string;
+}
+
+export interface SmartAnalysisResponse {
+  project_id: number;
+  results: SmartAnalysisResult[];
+  total_processed: number;
+  successful: number;
+}
+
+export const smartAnalyze = async (
+  projectId: number,
+  request: SmartAnalysisRequest
+): Promise<SmartAnalysisResponse> => {
+  const response = await api.post<SmartAnalysisResponse>(
+    `/api/projects/${projectId}/smart-analyze`,
+    request
+  );
+  return response.data;
+};
+
+// Smart Analysis Progress Event type
+export interface SmartAnalysisProgressEvent {
+  event_type: 'start' | 'parsing' | 'parsing_spec' | 'generating' | 'completed' | 'warning' | 'error' | 'done' | 'fatal_error';
+  rfi_id?: number;
+  rfi_filename?: string;
+  spec_name?: string;
+  spec_count?: number;
+  spec_index?: number;
+  spec_total?: number;
+  specs_parsed?: number;
+  result_id?: number;
+  confidence?: number;
+  current_index?: number;
+  total?: number;
+  completed?: number;
+  error?: string;
+  message: string;
+}
+
+// Streaming smart analysis with progress updates
+export const smartAnalyzeStream = (
+  projectId: number,
+  request: SmartAnalysisRequest,
+  onProgress: (event: SmartAnalysisProgressEvent) => void
+): { cancel: () => void } => {
+  // For SSE, we need to send a POST first, then use EventSource
+  // Since EventSource only supports GET, we'll use fetch with ReadableStream
+  const controller = new AbortController();
+  
+  const fetchStream = async () => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/projects/${projectId}/smart-analyze-stream`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+          signal: controller.signal,
+        }
+      );
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        onProgress({ event_type: 'error', message: 'Failed to get stream reader' });
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data: SmartAnalysisProgressEvent = JSON.parse(line.slice(6));
+              onProgress(data);
+            } catch {
+              console.warn('Failed to parse SSE data:', line);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        onProgress({ event_type: 'error', message: `Stream error: ${(error as Error).message}` });
+      }
+    }
+  };
+
+  fetchStream();
+
+  return {
+    cancel: () => controller.abort()
+  };
+};
+
+// Updated Chat API with actions
+export interface ChatAction {
+  action_type: string;
+  label: string;
+  description: string;
+  params: Record<string, unknown>;
+  icon?: string;
+}
+
+export interface ChatResponseWithActions extends ChatResponse {
+  actions: ChatAction[];
+  detected_intent?: string;
+}

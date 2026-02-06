@@ -31,6 +31,15 @@ class ChatMessage(BaseModel):
     session_id: Optional[str] = None
 
 
+class ChatAction(BaseModel):
+    """An action that can be triggered from chat."""
+    action_type: str  # 'find_specs', 'draft_response', 'open_file', 'search_files', 'navigate'
+    label: str
+    description: str
+    params: dict = {}
+    icon: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     """A chat response."""
     content: str
@@ -38,6 +47,8 @@ class ChatResponse(BaseModel):
     sources: list[dict] = []
     timestamp: str
     suggested_queries: list[str] = []
+    actions: list[ChatAction] = []  # Quick actions the UI can display
+    detected_intent: Optional[str] = None  # What we think the user wants
 
 
 # In-memory session storage (in production, use Redis or database)
@@ -91,6 +102,110 @@ def _score_file_relevance(filename: str, content: str, search_terms: list[str]) 
     return score
 
 
+def _detect_intent_and_actions(query: str, has_project: bool) -> tuple[str, list[ChatAction]]:
+    """
+    Detect user intent and suggest quick actions.
+    Returns (intent, list of actions).
+    """
+    query_lower = query.lower()
+    actions = []
+    intent = "general_question"
+    
+    # Pattern matching for intent detection
+    patterns = {
+        "find_specs": [
+            r"find\s+spec", r"search\s+spec", r"look\s+for\s+spec",
+            r"specification\s+for", r"what\s+spec", r"which\s+spec",
+            r"related\s+spec", r"relevant\s+spec"
+        ],
+        "draft_rfi": [
+            r"draft\s+(an?\s+)?rfi", r"respond\s+to\s+rfi", r"rfi\s+response",
+            r"write\s+(an?\s+)?rfi", r"help\s+with\s+rfi", r"answer\s+rfi"
+        ],
+        "draft_submittal": [
+            r"draft\s+(a\s+)?submittal", r"submittal\s+response",
+            r"respond\s+to\s+submittal", r"review\s+submittal"
+        ],
+        "file_search": [
+            r"find\s+(the\s+)?(file|document|drawing|pdf)",
+            r"where\s+is", r"locate\s+(the\s+)?",
+            r"search\s+for", r"show\s+me", r"look\s+for"
+        ],
+        "smart_analysis": [
+            r"analyze\s+(this\s+)?rfi", r"process\s+rfi",
+            r"generate\s+response", r"create\s+response"
+        ]
+    }
+    
+    # Check each pattern
+    for intent_type, intent_patterns in patterns.items():
+        for pattern in intent_patterns:
+            if re.search(pattern, query_lower):
+                intent = intent_type
+                break
+        if intent != "general_question":
+            break
+    
+    # Generate actions based on intent and context
+    if has_project:
+        # Project-scoped actions
+        if intent in ["find_specs", "general_question"]:
+            actions.append(ChatAction(
+                action_type="find_specs",
+                label="Find Related Specs",
+                description="Search for specification files related to this query",
+                icon="search",
+                params={"query": query}
+            ))
+        
+        if intent in ["draft_rfi", "smart_analysis"]:
+            actions.append(ChatAction(
+                action_type="smart_analysis",
+                label="Start Smart Analysis",
+                description="Use AI to find relevant specs and draft a response",
+                icon="sparkles",
+                params={}
+            ))
+        
+        if intent in ["file_search", "general_question"]:
+            actions.append(ChatAction(
+                action_type="browse_files",
+                label="Browse Files",
+                description="Open the file browser to find documents",
+                icon="folder",
+                params={}
+            ))
+        
+        # Always suggest these for projects
+        if len(actions) < 3:
+            actions.append(ChatAction(
+                action_type="view_rfis",
+                label="View RFIs",
+                description="See all RFIs in this project",
+                icon="document",
+                params={}
+            ))
+    else:
+        # Global actions
+        actions.append(ChatAction(
+            action_type="navigate",
+            label="Open Projects",
+            description="Go to project list to select a project",
+            icon="folder",
+            params={"path": "/projects"}
+        ))
+        
+        actions.append(ChatAction(
+            action_type="navigate",
+            label="Configure Settings",
+            description="Set up shared folder paths",
+            icon="settings",
+            params={"path": "/settings"}
+        ))
+    
+    return intent, actions[:3]  # Limit to 3 actions
+
+
 @router.post("/message", response_model=ChatResponse)
 async def send_message(
     message: ChatMessage,
@@ -120,6 +235,12 @@ async def send_message(
     
     # Extract search terms for better matching
     search_terms = _extract_search_terms(message.content)
+    
+    # Detect user intent and generate quick actions
+    detected_intent, actions = _detect_intent_and_actions(
+        message.content, 
+        has_project=message.project_id is not None
+    )
     
     # Search for relevant context
     sources = []
@@ -320,6 +441,8 @@ Let me know if you need help setting up the knowledge base."""
         sources=sources,
         timestamp=timestamp,
         suggested_queries=suggested_queries,
+        actions=actions,
+        detected_intent=detected_intent,
     )
 
 
