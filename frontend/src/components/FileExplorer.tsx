@@ -43,7 +43,7 @@ interface SetupState {
 
 export default function FileExplorer({ projectId }: FileExplorerProps) {
   const [selectedType, setSelectedType] = useState<ContentType | 'all'>('all');
-  const [viewMode, setViewMode] = useState<'indexed' | 'browse'>('indexed');
+  const [viewMode, setViewMode] = useState<'indexed' | 'browse'>('browse');
   const [setupState, setSetupState] = useState<SetupState>({
     phase: 'idle',
     scanProgress: null,
@@ -461,7 +461,6 @@ function FileRow({ file }: { file: ProjectFileSummary }) {
 
 function FolderTreeBrowser({ treeData, isLoading }: { treeData?: import('../services/api').ProjectFolderTreeResponse; isLoading: boolean }) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [activeSection, setActiveSection] = useState<'rfi' | 'specs'>('rfi');
   const [searchQuery, setSearchQuery] = useState('');
 
   const toggleFolder = useCallback((folder: string) => {
@@ -473,9 +472,9 @@ function FolderTreeBrowser({ treeData, isLoading }: { treeData?: import('../serv
     });
   }, []);
 
-  const files = activeSection === 'rfi' ? treeData?.rfi_files || [] : treeData?.spec_files || [];
-  const folders = activeSection === 'rfi' ? treeData?.rfi_folders || [] : treeData?.spec_folders || [];
-  const folderLabel = activeSection === 'rfi' ? treeData?.rfi_folder : treeData?.specs_folder;
+  const files = treeData?.spec_files || [];
+  const folders = treeData?.spec_folders || [];
+  const folderLabel = treeData?.specs_folder;
 
   // Filter files by search
   const filteredFiles = useMemo(() => {
@@ -514,26 +513,9 @@ function FolderTreeBrowser({ treeData, isLoading }: { treeData?: import('../serv
 
   return (
     <div>
-      {/* Section toggle */}
+      {/* Search */}
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex bg-slate-100 rounded-lg p-0.5">
-          <button
-            onClick={() => { setActiveSection('rfi'); setSearchQuery(''); }}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-              activeSection === 'rfi' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            RFI / Submittals ({treeData.rfi_files.length})
-          </button>
-          <button
-            onClick={() => { setActiveSection('specs'); setSearchQuery(''); }}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-              activeSection === 'specs' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Project Knowledge ({treeData.spec_files.length})
-          </button>
-        </div>
+        <span className="text-sm font-medium text-slate-600">Project Knowledge ({treeData.spec_files.length} files)</span>
         <input
           type="text"
           value={searchQuery}
