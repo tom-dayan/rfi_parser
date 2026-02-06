@@ -703,6 +703,277 @@ async def suggest_spec_files(
     }
 
 
+@router.post("/projects/{project_id}/suggest-specs-from-paths")
+async def suggest_specs_from_file_paths(
+    project_id: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    AI-assisted spec discovery from file paths (NO DATABASE REQUIRED).
+    
+    This endpoint works directly with the filesystem - no scanning needed.
+    It analyzes RFI filenames to suggest relevant spec files.
+    
+    Expected request body:
+    {
+        "rfi_files": [
+            {"path": "/path/to/rfi.pdf", "name": "RFI #92_Waterproofing.pdf"}
+        ]
+    }
+    """
+    import os
+    import re
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    rfi_files = request.get("rfi_files", [])
+    if not rfi_files:
+        raise HTTPException(status_code=400, detail="No RFI files provided")
+    
+    # Get all spec files from filesystem (fast - no parsing)
+    specs_folder = project.specs_folder_path
+    if not specs_folder or not os.path.exists(specs_folder):
+        return {"suggestions": [], "error": "Specs folder not configured or not found"}
+    
+    # Collect all spec files
+    spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
+    spec_files = []
+    
+    for root, _, files in os.walk(specs_folder):
+        for filename in files:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in spec_extensions:
+                full_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(full_path, specs_folder)
+                spec_files.append({
+                    "name": filename,
+                    "path": full_path,
+                    "relative_path": relative_path,
+                    "extension": ext
+                })
+    
+    # Analyze each RFI file and suggest specs
+    suggestions = []
+    
+    for rfi in rfi_files:
+        rfi_path = rfi.get("path", "")
+        rfi_name = rfi.get("name", os.path.basename(rfi_path))
+        
+        # Extract keywords from RFI filename (without parsing the file content)
+        # This is fast because we only analyze the filename
+        extracted = extract_question(rfi_name, rfi_name)
+        
+        # Combine all search terms
+        search_terms = []
+        if extracted.keywords:
+            search_terms.extend(extracted.keywords)
+        if extracted.spec_sections:
+            search_terms.extend(extracted.spec_sections)
+        if extracted.drawing_references:
+            search_terms.extend(extracted.drawing_references)
+        
+        # Add extracted terms from RFI title
+        if extracted.rfi_title:
+            title_words = re.findall(r'\b\w{4,}\b', extracted.rfi_title.lower())
+            search_terms.extend(title_words)
+        
+        # Also extract words from the filename directly
+        filename_words = re.findall(r'\b\w{3,}\b', rfi_name.lower())
+        # Filter out common words
+        stopwords = {'the', 'and', 'for', 'with', 'from', 'pdf', 'rfi', 'submittal', 'request', 'review', 'approval'}
+        filename_words = [w for w in filename_words if w not in stopwords and not w.isdigit()]
+        search_terms.extend(filename_words)
+        
+        # Deduplicate search terms
+        search_terms = list(set(search_terms))
+        
+        # Score each spec file
+        scored_specs = []
+        for spec in spec_files:
+            score = _score_spec_relevance(
+                spec["name"], 
+                spec["relative_path"],
+                search_terms,
+                extracted
+            )
+            if score > 0:
+                scored_specs.append({
+                    **spec,
+                    "relevance_score": score,
+                    "matched_terms": _get_matched_terms(spec["name"], search_terms)
+                })
+        
+        # Sort by score and take top suggestions
+        scored_specs.sort(key=lambda x: x["relevance_score"], reverse=True)
+        top_specs = scored_specs[:15]  # Top 15 suggestions
+        
+        suggestions.append({
+            "rfi_path": rfi_path,
+            "rfi_filename": rfi_name,
+            "rfi_title": extracted.rfi_title,
+            "extracted_keywords": search_terms[:10],
+            "spec_references": extracted.spec_sections,
+            "suggested_specs": top_specs,
+            "total_specs_found": len(spec_files)
+        })
+    
+    return {
+        "suggestions": suggestions,
+        "project_id": project_id,
+        "specs_folder": specs_folder,
+        "total_spec_files": len(spec_files)
+    }
+
+
+@router.post("/projects/{project_id}/smart-analyze-from-paths")
+async def smart_analyze_from_paths(
+    project_id: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Smart Analysis from file paths (NO DATABASE REQUIRED for RFIs).
+    
+    Parses RFI and spec files on-demand and generates responses.
+    
+    Expected request body:
+    {
+        "analyses": [
+            {
+                "rfi_path": "/path/to/rfi.pdf",
+                "rfi_name": "RFI #92_Waterproofing.pdf",
+                "spec_file_paths": ["/path/to/spec1.pdf"]
+            }
+        ]
+    }
+    """
+    import os
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    analyses = request.get("analyses", [])
+    if not analyses:
+        raise HTTPException(status_code=400, detail="No analyses specified")
+    
+    # Get AI service
+    ai_service = _get_ai_service()
+    
+    # Get parser registry for on-demand parsing
+    from ..services.parsers import get_parser_registry
+    parser_registry = get_parser_registry()
+    
+    results = []
+    
+    for analysis in analyses:
+        rfi_path = analysis.get("rfi_path")
+        rfi_name = analysis.get("rfi_name", os.path.basename(rfi_path) if rfi_path else "Unknown")
+        spec_paths = analysis.get("spec_file_paths", [])
+        
+        if not rfi_path or not os.path.exists(rfi_path):
+            results.append({
+                "rfi_path": rfi_path,
+                "rfi_name": rfi_name,
+                "error": "RFI file not found",
+                "response": None
+            })
+            continue
+        
+        # Parse the RFI file on-demand
+        try:
+            rfi_content = parser_registry.parse_file(rfi_path)
+        except Exception as e:
+            rfi_content = f"Error parsing RFI: {str(e)}"
+        
+        # Parse each selected spec file on-demand
+        spec_contents = []
+        for spec_path in spec_paths:
+            if os.path.exists(spec_path):
+                try:
+                    content = parser_registry.parse_file(spec_path)
+                    spec_contents.append({
+                        "path": spec_path,
+                        "name": os.path.basename(spec_path),
+                        "content": content[:50000] if content else ""  # Limit content size
+                    })
+                except Exception as e:
+                    spec_contents.append({
+                        "path": spec_path,
+                        "name": os.path.basename(spec_path),
+                        "content": f"Error parsing: {str(e)}"
+                    })
+        
+        # Generate response using AI
+        if ai_service:
+            try:
+                # Build context from specs
+                context = "\n\n---\n\n".join([
+                    f"SPECIFICATION: {s['name']}\n{s['content'][:20000]}"
+                    for s in spec_contents
+                ])
+                
+                prompt = f"""You are an expert architectural consultant helping respond to an RFI (Request for Information).
+
+RFI DOCUMENT: {rfi_name}
+{rfi_content[:30000]}
+
+RELEVANT SPECIFICATIONS:
+{context[:50000]}
+
+Based on the RFI content and the relevant specifications provided, draft a professional response that:
+1. Directly addresses the questions raised in the RFI
+2. References specific sections from the specifications when applicable
+3. Provides clear, actionable guidance
+4. Maintains a professional tone appropriate for construction documentation
+
+RESPONSE:"""
+                
+                response = ai_service.generate_response(prompt, context="")
+                
+                # Store the result in the database for future reference
+                from ..models import ProcessingResult
+                result_record = ProcessingResult(
+                    project_id=project_id,
+                    file_id=None,  # No database file record
+                    filename=rfi_name,
+                    file_path=rfi_path,
+                    questions_found=[],
+                    generated_response=response,
+                    spec_references=[os.path.basename(s["path"]) for s in spec_contents],
+                    status="completed"
+                )
+                db.add(result_record)
+                db.commit()
+                
+                results.append({
+                    "rfi_path": rfi_path,
+                    "rfi_name": rfi_name,
+                    "response": response,
+                    "specs_used": [s["name"] for s in spec_contents],
+                    "result_id": result_record.id
+                })
+            except Exception as e:
+                results.append({
+                    "rfi_path": rfi_path,
+                    "rfi_name": rfi_name,
+                    "error": str(e),
+                    "response": None
+                })
+        else:
+            results.append({
+                "rfi_path": rfi_path,
+                "rfi_name": rfi_name,
+                "error": "AI service not configured",
+                "response": None
+            })
+    
+    return {"results": results, "project_id": project_id}
+
+
 @router.post("/projects/{project_id}/smart-analyze")
 async def smart_analyze_documents(
     project_id: int,

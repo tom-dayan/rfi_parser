@@ -631,3 +631,85 @@ export interface ChatResponseWithActions extends ChatResponse {
   actions: ChatAction[];
   detected_intent?: string;
 }
+
+// ============================================
+// Path-based Smart Analysis (No DB required)
+// ============================================
+
+export interface RfiFileInput {
+  path: string;
+  name: string;
+}
+
+export interface PathBasedSpecSuggestion {
+  name: string;
+  path: string;
+  relative_path: string;
+  extension: string;
+  relevance_score: number;
+  matched_terms: string[];
+}
+
+export interface PathBasedRfiSuggestions {
+  rfi_path: string;
+  rfi_filename: string;
+  rfi_title: string | null;
+  extracted_keywords: string[];
+  spec_references: string[];
+  suggested_specs: PathBasedSpecSuggestion[];
+  total_specs_found: number;
+}
+
+export interface PathBasedSuggestResponse {
+  suggestions: PathBasedRfiSuggestions[];
+  project_id: number;
+  specs_folder: string;
+  total_spec_files: number;
+  error?: string;
+}
+
+// Suggest specs from file paths (no database required)
+export const suggestSpecsFromPaths = async (
+  projectId: number,
+  rfiFiles: RfiFileInput[]
+): Promise<PathBasedSuggestResponse> => {
+  const response = await api.post<PathBasedSuggestResponse>(
+    `/api/projects/${projectId}/suggest-specs-from-paths`,
+    { rfi_files: rfiFiles }
+  );
+  return response.data;
+};
+
+export interface PathBasedAnalysisRequest {
+  analyses: Array<{
+    rfi_path: string;
+    rfi_name: string;
+    spec_file_paths: string[];
+  }>;
+}
+
+export interface PathBasedAnalysisResult {
+  rfi_path: string;
+  rfi_name: string;
+  response: string | null;
+  specs_used?: string[];
+  result_id?: number;
+  error?: string;
+}
+
+export interface PathBasedAnalysisResponse {
+  results: PathBasedAnalysisResult[];
+  project_id: number;
+}
+
+// Smart analyze from file paths (no database required for RFIs)
+export const smartAnalyzeFromPaths = async (
+  projectId: number,
+  request: PathBasedAnalysisRequest
+): Promise<PathBasedAnalysisResponse> => {
+  const response = await api.post<PathBasedAnalysisResponse>(
+    `/api/projects/${projectId}/smart-analyze-from-paths`,
+    request
+  );
+  return response.data;
+};
