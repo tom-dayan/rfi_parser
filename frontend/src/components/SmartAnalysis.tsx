@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, memo, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   browseProjectFolder,
@@ -617,20 +617,39 @@ export default function SmartAnalysis({
                         )}
                         
                         {/* Folders */}
-                        {allFolders.filter(f => !f.includes('/')).map(folder => (
-                          <FolderTreeNode
-                            key={folder}
-                            folder={folder}
-                            allFolders={allFolders}
-                            allFiles={allSpecFiles}
-                            selectedSpecs={selectedSpecs.get(browsingRfiPath) || new Set()}
-                            expandedFolders={expandedFolders}
-                            onToggleFolder={toggleFolder}
-                            onToggleFile={(path) => toggleSpec(browsingRfiPath, path)}
-                            formatSize={formatSize}
-                            depth={0}
-                          />
-                        ))}
+                        {allFolders.filter(f => !f.includes('/')).map(folder => {
+                          const currentSelectedSpecs = selectedSpecs.get(browsingRfiPath) || new Set<string>();
+                          const childFolders = allFolders.filter(f => {
+                            if (!f.startsWith(folder + '/')) return false;
+                            const remainder = f.slice(folder.length + 1);
+                            return !remainder.includes('/');
+                          });
+                          const filesInFolder = allSpecFiles.filter(f => (f.folder || '') === folder);
+                          const selectedCount = allSpecFiles.filter(f => 
+                            ((f.folder || '').startsWith(folder)) && currentSelectedSpecs.has(f.path)
+                          ).length;
+                          const totalCount = allSpecFiles.filter(f => (f.folder || '').startsWith(folder)).length;
+                          
+                          return (
+                            <FolderTreeNode
+                              key={folder}
+                              folder={folder}
+                              childFolders={childFolders}
+                              filesInFolder={filesInFolder}
+                              selectedSpecs={currentSelectedSpecs}
+                              isExpanded={expandedFolders.has(folder)}
+                              selectedCount={selectedCount}
+                              totalCount={totalCount}
+                              onToggleFolder={toggleFolder}
+                              onToggleFile={(path) => toggleSpec(browsingRfiPath, path)}
+                              formatSize={formatSize}
+                              depth={0}
+                              allFolders={allFolders}
+                              allFiles={allSpecFiles}
+                              expandedFolders={expandedFolders}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   ) : (
@@ -841,56 +860,53 @@ export default function SmartAnalysis({
   );
 }
 
-// Folder Tree Node Component
-function FolderTreeNode({
-  folder,
-  allFolders,
-  allFiles,
-  selectedSpecs,
-  expandedFolders,
-  onToggleFolder,
-  onToggleFile,
-  formatSize,
-  depth,
-}: {
+// Memoized Folder Tree Node Component for better performance
+interface FolderTreeNodeProps {
   folder: string;
-  allFolders: string[];
-  allFiles: PathBasedSpecSuggestion[];
+  childFolders: string[];
+  filesInFolder: PathBasedSpecSuggestion[];
   selectedSpecs: Set<string>;
-  expandedFolders: Set<string>;
+  isExpanded: boolean;
+  selectedCount: number;
+  totalCount: number;
   onToggleFolder: (folder: string) => void;
   onToggleFile: (path: string) => void;
   formatSize: (bytes: number) => string;
   depth: number;
-}) {
-  const isExpanded = expandedFolders.has(folder);
-  
-  // Get direct child folders
-  const childFolders = allFolders.filter(f => {
-    if (!f.startsWith(folder + '/')) return false;
-    const remainder = f.slice(folder.length + 1);
-    return !remainder.includes('/');
-  });
-  
-  // Get files directly in this folder
-  const filesInFolder = allFiles.filter(f => (f.folder || '') === folder);
-  
-  // Get folder name (last part)
+  // For recursive children
+  allFolders: string[];
+  allFiles: PathBasedSpecSuggestion[];
+  expandedFolders: Set<string>;
+}
+
+const FolderTreeNode = memo(function FolderTreeNode({
+  folder,
+  childFolders,
+  filesInFolder,
+  selectedSpecs,
+  isExpanded,
+  selectedCount,
+  totalCount,
+  onToggleFolder,
+  onToggleFile,
+  formatSize,
+  depth,
+  allFolders,
+  allFiles,
+  expandedFolders,
+}: FolderTreeNodeProps) {
   const folderName = folder.split('/').pop() || folder;
   
-  // Count selected files in this folder and subfolders
-  const selectedCount = allFiles.filter(f => 
-    ((f.folder || '').startsWith(folder)) && selectedSpecs.has(f.path)
-  ).length;
-  
-  const totalCount = allFiles.filter(f => (f.folder || '').startsWith(folder)).length;
+  const handleToggle = useCallback(() => {
+    onToggleFolder(folder);
+  }, [folder, onToggleFolder]);
   
   return (
     <div className="border-b border-stone-100 last:border-b-0">
       {/* Folder Header */}
       <button
-        onClick={() => onToggleFolder(folder)}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-stone-50 transition text-left"
+        onClick={handleToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-stone-50 transition-colors text-left"
         style={{ paddingLeft: `${12 + depth * 16}px` }}
       >
         <svg
@@ -915,49 +931,96 @@ function FolderTreeNode({
         )}
       </button>
       
-      {/* Expanded Content */}
+      {/* Expanded Content - only render when expanded */}
       {isExpanded && (
         <div>
           {/* Files in this folder */}
           {filesInFolder.map(file => (
-            <label
+            <FileRow
               key={file.path}
-              className={`flex items-center gap-2 py-2 cursor-pointer hover:bg-stone-50 transition text-sm ${
-                selectedSpecs.has(file.path) ? 'bg-spec-50' : ''
-              }`}
-              style={{ paddingLeft: `${28 + depth * 16}px`, paddingRight: '12px' }}
-            >
-              <input
-                type="checkbox"
-                checked={selectedSpecs.has(file.path)}
-                onChange={() => onToggleFile(file.path)}
-                className="w-3.5 h-3.5 rounded text-spec-600 focus:ring-spec-500"
-              />
-              <svg className="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="flex-1 truncate">{file.name}</span>
-              <span className="text-xs text-stone-400">{formatSize(file.size || 0)}</span>
-            </label>
-          ))}
-          
-          {/* Child folders */}
-          {childFolders.map(childFolder => (
-            <FolderTreeNode
-              key={childFolder}
-              folder={childFolder}
-              allFolders={allFolders}
-              allFiles={allFiles}
-              selectedSpecs={selectedSpecs}
-              expandedFolders={expandedFolders}
-              onToggleFolder={onToggleFolder}
-              onToggleFile={onToggleFile}
+              file={file}
+              isSelected={selectedSpecs.has(file.path)}
+              onToggle={onToggleFile}
               formatSize={formatSize}
-              depth={depth + 1}
+              depth={depth}
             />
           ))}
+          
+          {/* Child folders - compute props for each child */}
+          {childFolders.map(childFolder => {
+            const childChildFolders = allFolders.filter(f => {
+              if (!f.startsWith(childFolder + '/')) return false;
+              const remainder = f.slice(childFolder.length + 1);
+              return !remainder.includes('/');
+            });
+            const childFilesInFolder = allFiles.filter(f => (f.folder || '') === childFolder);
+            const childSelectedCount = allFiles.filter(f => 
+              ((f.folder || '').startsWith(childFolder)) && selectedSpecs.has(f.path)
+            ).length;
+            const childTotalCount = allFiles.filter(f => (f.folder || '').startsWith(childFolder)).length;
+            
+            return (
+              <FolderTreeNode
+                key={childFolder}
+                folder={childFolder}
+                childFolders={childChildFolders}
+                filesInFolder={childFilesInFolder}
+                selectedSpecs={selectedSpecs}
+                isExpanded={expandedFolders.has(childFolder)}
+                selectedCount={childSelectedCount}
+                totalCount={childTotalCount}
+                onToggleFolder={onToggleFolder}
+                onToggleFile={onToggleFile}
+                formatSize={formatSize}
+                depth={depth + 1}
+                allFolders={allFolders}
+                allFiles={allFiles}
+                expandedFolders={expandedFolders}
+              />
+            );
+          })}
         </div>
       )}
     </div>
   );
-}
+});
+
+// Memoized file row for performance
+const FileRow = memo(function FileRow({
+  file,
+  isSelected,
+  onToggle,
+  formatSize,
+  depth,
+}: {
+  file: PathBasedSpecSuggestion;
+  isSelected: boolean;
+  onToggle: (path: string) => void;
+  formatSize: (bytes: number) => string;
+  depth: number;
+}) {
+  const handleChange = useCallback(() => {
+    onToggle(file.path);
+  }, [file.path, onToggle]);
+  
+  return (
+    <label
+      className={`flex items-center gap-2 py-2 cursor-pointer hover:bg-stone-50 transition-colors text-sm ${
+        isSelected ? 'bg-spec-50' : ''
+      }`}
+      style={{ paddingLeft: `${28 + depth * 16}px`, paddingRight: '12px' }}
+    >
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onChange={handleChange}
+        className="w-3.5 h-3.5 rounded text-spec-600 focus:ring-spec-500"
+      />
+      <svg className="w-4 h-4 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+      <span className="flex-1 truncate">{file.name}</span>
+      <span className="text-xs text-stone-400 flex-shrink-0">{formatSize(file.size || 0)}</span>
+    </label>
+  );
+});

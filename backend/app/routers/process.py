@@ -738,23 +738,47 @@ async def suggest_specs_from_file_paths(
     if not specs_folder or not os.path.exists(specs_folder):
         return {"suggestions": [], "error": "Specs folder not configured or not found"}
     
-    # Get exclude folders list
+    # Get exclude folders list and normalize them
     exclude_folders = project.exclude_folders or []
-    exclude_folders_lower = [f.lower() for f in exclude_folders]
+    
+    # Extract folder names from full paths and normalize
+    exclude_folder_names = set()
+    exclude_full_paths = set()
+    for excl in exclude_folders:
+        excl_normalized = excl.strip().replace('/', '\\').lower()
+        if excl_normalized:
+            # Add the full path for exact matching
+            exclude_full_paths.add(excl_normalized)
+            # Also extract just the folder name (last component)
+            folder_name = os.path.basename(excl_normalized)
+            if folder_name:
+                exclude_folder_names.add(folder_name)
     
     # Collect all spec files, respecting exclude_folders
     spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     spec_files = []
     
     for root, dirs, files in os.walk(specs_folder):
-        # Filter out excluded directories (modifying dirs in-place skips them)
-        dirs[:] = [d for d in dirs if d.lower() not in exclude_folders_lower]
+        root_normalized = root.replace('/', '\\').lower()
         
-        # Also check if current path contains any excluded folder
-        rel_root = os.path.relpath(root, specs_folder)
+        # Filter out excluded directories by name or if their full path matches
+        def should_include_dir(d):
+            d_lower = d.lower()
+            if d_lower in exclude_folder_names:
+                return False
+            # Check if the full path of this dir matches any exclude path
+            full_dir_path = os.path.join(root, d).replace('/', '\\').lower()
+            for excl_path in exclude_full_paths:
+                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + '\\'):
+                    return False
+            return True
+        
+        dirs[:] = [d for d in dirs if should_include_dir(d)]
+        
+        # Check if current root should be skipped
         skip_this = False
-        for excl in exclude_folders_lower:
-            if excl in rel_root.lower():
+        for excl_path in exclude_full_paths:
+            if root_normalized == excl_path or root_normalized.startswith(excl_path + '\\'):
                 skip_this = True
                 break
         if skip_this:
@@ -889,26 +913,48 @@ async def get_spec_folder_tree(
     if not specs_folder or not os.path.exists(specs_folder):
         return {"error": "Specs folder not configured or not found", "tree": {}, "files": []}
     
-    # Get exclude folders
+    # Get exclude folders and normalize them
     exclude_folders = project.exclude_folders or []
-    exclude_folders_lower = [f.lower() for f in exclude_folders]
+    
+    # Extract folder names from full paths and normalize
+    exclude_folder_names = set()
+    exclude_full_paths = set()
+    for excl in exclude_folders:
+        excl_normalized = excl.strip().replace('/', '\\').lower()
+        if excl_normalized:
+            exclude_full_paths.add(excl_normalized)
+            folder_name = os.path.basename(excl_normalized)
+            if folder_name:
+                exclude_folder_names.add(folder_name)
     
     spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     all_files = []
     folders_set = set()
     
     for root, dirs, files in os.walk(specs_folder):
-        # Filter out excluded directories
-        dirs[:] = [d for d in dirs if d.lower() not in exclude_folders_lower]
+        root_normalized = root.replace('/', '\\').lower()
+        
+        # Filter out excluded directories by name or full path
+        def should_include_dir(d):
+            d_lower = d.lower()
+            if d_lower in exclude_folder_names:
+                return False
+            full_dir_path = os.path.join(root, d).replace('/', '\\').lower()
+            for excl_path in exclude_full_paths:
+                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + '\\'):
+                    return False
+            return True
+        
+        dirs[:] = [d for d in dirs if should_include_dir(d)]
         
         rel_root = os.path.relpath(root, specs_folder)
         if rel_root == ".":
             rel_root = ""
         
-        # Check if current path contains any excluded folder
+        # Check if current root should be skipped
         skip_this = False
-        for excl in exclude_folders_lower:
-            if excl in rel_root.lower():
+        for excl_path in exclude_full_paths:
+            if root_normalized == excl_path or root_normalized.startswith(excl_path + '\\'):
                 skip_this = True
                 break
         if skip_this:
