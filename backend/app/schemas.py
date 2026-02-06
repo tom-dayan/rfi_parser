@@ -141,7 +141,9 @@ class ProcessingResultCreate(BaseModel):
 class ProcessingResult(BaseModel):
     id: int
     project_id: int
-    source_file_id: int
+    source_file_id: Optional[int] = None  # Nullable for path-based Smart Analysis
+    source_filename: Optional[str] = None  # Filename for path-based results
+    source_file_path: Optional[str] = None  # Full path for path-based results
     document_type: DocumentType
     response_text: Optional[str] = None
     status: Optional[SubmittalStatus] = None  # Only for submittals
@@ -156,7 +158,7 @@ class ProcessingResult(BaseModel):
 
 class ProcessingResultWithFile(ProcessingResult):
     """Processing Result with the associated source file info"""
-    source_file: ProjectFileSummary
+    source_file: Optional[ProjectFileSummary] = None  # Nullable for path-based results
 
 
 # Processing request schemas

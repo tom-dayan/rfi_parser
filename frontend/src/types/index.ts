@@ -127,7 +127,9 @@ export interface SpecReference {
 export interface ProcessingResult {
   id: number;
   project_id: number;
-  source_file_id: number;
+  source_file_id?: number;
+  source_filename?: string;  // For path-based Smart Analysis
+  source_file_path?: string;  // For path-based Smart Analysis
   document_type: DocumentType;
   response_text?: string;
   status?: SubmittalStatus;  // Only for submittals
@@ -138,7 +140,7 @@ export interface ProcessingResult {
 }
 
 export interface ProcessingResultWithFile extends ProcessingResult {
-  source_file: ProjectFileSummary;
+  source_file?: ProjectFileSummary;  // Optional for path-based results
 }
 
 // Processing request types

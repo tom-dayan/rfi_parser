@@ -106,14 +106,14 @@ export default function CoPilotMode({
 
   const handleGenerateInitialDraft = () => {
     const prompt = isRFI
-      ? `Generate a professional response to this RFI. The document is titled "${result.source_file.filename}". Consider these specification references: ${selectedSpecs.join(', ')}. Be concise and reference specific sections.`
-      : `Generate professional review comments for this submittal titled "${result.source_file.filename}". Consider these specification references: ${selectedSpecs.join(', ')}. Provide clear comments on compliance.`;
+      ? `Generate a professional response to this RFI. The document is titled "${result.source_file?.filename || result.source_filename || 'Unknown'}". Consider these specification references: ${selectedSpecs.join(', ')}. Be concise and reference specific sections.`
+      : `Generate professional review comments for this submittal titled "${result.source_file?.filename || result.source_filename || 'Unknown'}". Consider these specification references: ${selectedSpecs.join(', ')}. Provide clear comments on compliance.`;
     
     generateDraft(prompt);
   };
 
   const handleRegenerateDraft = () => {
-    const prompt = `Regenerate this ${isRFI ? 'RFI response' : 'submittal review'} with a different approach. Keep it professional and concise. Document: "${result.source_file.filename}".`;
+    const prompt = `Regenerate this ${isRFI ? 'RFI response' : 'submittal review'} with a different approach. Keep it professional and concise. Document: "${result.source_file?.filename || result.source_filename || 'Unknown'}".`;
     generateDraft(prompt);
   };
 
@@ -130,7 +130,7 @@ export default function CoPilotMode({
             </div>
             <div>
               <h2 className="text-lg font-semibold text-white">Co-Pilot Mode</h2>
-              <p className="text-sm text-white/80">{result.source_file.filename}</p>
+              <p className="text-sm text-white/80">{result.source_file?.filename || result.source_filename || 'Unknown'}</p>
             </div>
           </div>
           <button
@@ -199,7 +199,7 @@ export default function CoPilotMode({
                     }`}>
                       {isRFI ? 'RFI' : 'Submittal'}
                     </span>
-                    <span className="text-sm text-slate-600">{result.source_file.filename}</span>
+                    <span className="text-sm text-slate-600">{result.source_file?.filename || result.source_filename || 'Unknown'}</span>
                   </div>
                   <p className="text-sm text-slate-600">
                     Review the document details before proceeding to select relevant specifications.

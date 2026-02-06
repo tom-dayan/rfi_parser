@@ -72,7 +72,11 @@ class ProcessingResult(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    source_file_id = Column(Integer, ForeignKey("project_files.id"), nullable=False)
+    source_file_id = Column(Integer, ForeignKey("project_files.id"), nullable=True)  # Nullable for path-based analysis
+
+    # For path-based Smart Analysis (no database file record)
+    source_filename = Column(String(255), nullable=True)  # Filename for path-based results
+    source_file_path = Column(String(1024), nullable=True)  # Full path for path-based results
 
     # Document type determines response format
     document_type = Column(String(50), nullable=False)  # rfi, submittal

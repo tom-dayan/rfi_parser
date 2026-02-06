@@ -482,14 +482,14 @@ async def process_documents_stream(
     )
 
 
-@router.get("/projects/{project_id}/results", response_model=list[ProcessingResultWithFile])
+@router.get("/projects/{project_id}/results")
 def get_project_results(
     project_id: int,
     document_type: Optional[str] = None,
     status: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all results for a project."""
+    """Get all results for a project (both file-based and path-based)."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -502,28 +502,54 @@ def get_project_results(
     if status:
         query = query.filter(ProcessingResult.status == status)
 
-    results = query.all()
+    results = query.order_by(ProcessingResult.processed_date.desc()).all()
 
     # Build response with file info
     response = []
     for result in results:
-        source_file = db.query(ProjectFile).filter(
-            ProjectFile.id == result.source_file_id
-        ).first()
+        result_data = ProcessingResultSchema.model_validate(result).model_dump()
+        
+        if result.source_file_id:
+            # Traditional result with a database file record
+            source_file = db.query(ProjectFile).filter(
+                ProjectFile.id == result.source_file_id
+            ).first()
 
-        if source_file:
-            response.append(ProcessingResultWithFile(
-                **ProcessingResultSchema.model_validate(result).model_dump(),
-                source_file=ProjectFileSummary(
-                    id=source_file.id,
-                    filename=source_file.filename,
-                    file_type=source_file.file_type,
-                    file_size=source_file.file_size,
-                    content_type=source_file.content_type,
-                    has_content=bool(source_file.content_text),
-                    kb_indexed=source_file.kb_indexed
-                )
-            ))
+            if source_file:
+                response.append({
+                    **result_data,
+                    "source_file": {
+                        "id": source_file.id,
+                        "filename": source_file.filename,
+                        "file_type": source_file.file_type,
+                        "file_size": source_file.file_size,
+                        "content_type": source_file.content_type,
+                        "has_content": bool(source_file.content_text),
+                        "kb_indexed": source_file.kb_indexed,
+                    }
+                })
+        else:
+            # Path-based result (from Smart Analysis) - no database file record
+            # Determine file extension from filename
+            import os
+            filename = result.source_filename or "Unknown"
+            ext = os.path.splitext(filename)[1].lower().lstrip('.')
+            doc_type = result.document_type or "rfi"
+            
+            response.append({
+                **result_data,
+                "source_filename": result.source_filename,
+                "source_file_path": result.source_file_path,
+                "source_file": {
+                    "id": 0,  # Placeholder for path-based results
+                    "filename": filename,
+                    "file_type": ext or "pdf",
+                    "file_size": 0,
+                    "content_type": doc_type,
+                    "has_content": False,
+                    "kb_indexed": False,
+                }
+            })
 
     return response
 
@@ -1093,17 +1119,23 @@ RESPONSE:"""
                 
                 response = ai_service.generate_response(prompt, context="")
                 
-                # Store the result in the database for future reference
-                from ..models import ProcessingResult
+                # Determine document type from filename
+                name_lower = rfi_name.lower()
+                doc_type = "submittal" if "submittal" in name_lower else "rfi"
+                
+                # Store the result in the database
                 result_record = ProcessingResult(
                     project_id=project_id,
-                    file_id=None,  # No database file record
-                    filename=rfi_name,
-                    file_path=rfi_path,
-                    questions_found=[],
-                    generated_response=response,
-                    spec_references=[os.path.basename(s["path"]) for s in spec_contents],
-                    status="completed"
+                    source_file_id=None,  # No database file record (path-based)
+                    source_filename=rfi_name,
+                    source_file_path=rfi_path,
+                    document_type=doc_type,
+                    response_text=response,
+                    confidence=0.8,
+                    spec_references=[
+                        {"source_filename": s["name"], "text": "", "score": 1.0}
+                        for s in spec_contents
+                    ],
                 )
                 db.add(result_record)
                 db.commit()

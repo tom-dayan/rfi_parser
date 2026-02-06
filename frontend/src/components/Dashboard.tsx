@@ -479,7 +479,7 @@ function ResultCard({ result, onViewDetails, onCoPilot }: { result: ProcessingRe
             {isRFI ? 'RFI' : 'Submittal'}
           </span>
           <h3 className="text-lg font-semibold text-gray-900 mt-2">
-            {result.source_file.filename}
+            {result.source_file?.filename || result.source_filename || 'Unknown'}
           </h3>
         </div>
         {!isRFI && result.status && (
@@ -628,7 +628,7 @@ function ResultDetailModal({
               </span>
             </div>
             <h2 className="text-lg font-semibold text-slate-900">
-              {result.source_file.filename}
+              {result.source_file?.filename || result.source_filename || 'Unknown'}
             </h2>
           </div>
           <button
