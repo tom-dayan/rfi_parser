@@ -14,6 +14,9 @@ class Project(Base):
     specs_folder_path = Column(String(1024), nullable=False)
     created_date = Column(DateTime(timezone=True), server_default=func.now())
     last_scanned = Column(DateTime(timezone=True), nullable=True)
+    
+    # Exclude folders from spec suggestions (JSON list of folder names/paths)
+    exclude_folders = Column(JSON, nullable=True, default=list)
 
     # Knowledge base status
     kb_indexed = Column(Boolean, default=False)  # Whether specs are indexed in vector store

@@ -16,6 +16,7 @@ export interface Project {
   specs_folder_path: string;
   created_date: string;
   last_scanned?: string;
+  exclude_folders?: string[];
   kb_indexed: boolean;
   kb_last_indexed?: string;
   kb_document_count: number;
@@ -34,6 +35,7 @@ export interface ProjectCreate {
   name: string;
   rfi_folder_path: string;
   specs_folder_path: string;
+  exclude_folders?: string[];
 }
 
 // Project File types

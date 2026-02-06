@@ -738,11 +738,28 @@ async def suggest_specs_from_file_paths(
     if not specs_folder or not os.path.exists(specs_folder):
         return {"suggestions": [], "error": "Specs folder not configured or not found"}
     
-    # Collect all spec files
+    # Get exclude folders list
+    exclude_folders = project.exclude_folders or []
+    exclude_folders_lower = [f.lower() for f in exclude_folders]
+    
+    # Collect all spec files, respecting exclude_folders
     spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     spec_files = []
     
-    for root, _, files in os.walk(specs_folder):
+    for root, dirs, files in os.walk(specs_folder):
+        # Filter out excluded directories (modifying dirs in-place skips them)
+        dirs[:] = [d for d in dirs if d.lower() not in exclude_folders_lower]
+        
+        # Also check if current path contains any excluded folder
+        rel_root = os.path.relpath(root, specs_folder)
+        skip_this = False
+        for excl in exclude_folders_lower:
+            if excl in rel_root.lower():
+                skip_this = True
+                break
+        if skip_this:
+            continue
+        
         for filename in files:
             ext = os.path.splitext(filename)[1].lower()
             if ext in spec_extensions:
@@ -820,11 +837,107 @@ async def suggest_specs_from_file_paths(
             "total_specs_found": len(spec_files)
         })
     
+    # Also return ALL spec files (not just suggested) for folder tree browsing
+    # Include folder structure information
+    all_specs_with_folders = []
+    folder_structure = {}
+    
+    for spec in spec_files:
+        rel_path = spec["relative_path"]
+        folder = os.path.dirname(rel_path) if os.path.dirname(rel_path) else ""
+        
+        # Build folder structure
+        if folder:
+            parts = folder.replace("\\", "/").split("/")
+            current = folder_structure
+            for part in parts:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+        
+        all_specs_with_folders.append({
+            **spec,
+            "folder": folder
+        })
+    
     return {
         "suggestions": suggestions,
         "project_id": project_id,
         "specs_folder": specs_folder,
-        "total_spec_files": len(spec_files)
+        "total_spec_files": len(spec_files),
+        "all_spec_files": all_specs_with_folders,
+        "folder_structure": folder_structure
+    }
+
+
+@router.get("/projects/{project_id}/spec-folder-tree")
+async def get_spec_folder_tree(
+    project_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the complete folder tree structure of the specs folder.
+    Returns all files organized by folder for tree navigation.
+    """
+    import os
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    specs_folder = project.specs_folder_path
+    if not specs_folder or not os.path.exists(specs_folder):
+        return {"error": "Specs folder not configured or not found", "tree": {}, "files": []}
+    
+    # Get exclude folders
+    exclude_folders = project.exclude_folders or []
+    exclude_folders_lower = [f.lower() for f in exclude_folders]
+    
+    spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
+    all_files = []
+    folders_set = set()
+    
+    for root, dirs, files in os.walk(specs_folder):
+        # Filter out excluded directories
+        dirs[:] = [d for d in dirs if d.lower() not in exclude_folders_lower]
+        
+        rel_root = os.path.relpath(root, specs_folder)
+        if rel_root == ".":
+            rel_root = ""
+        
+        # Check if current path contains any excluded folder
+        skip_this = False
+        for excl in exclude_folders_lower:
+            if excl in rel_root.lower():
+                skip_this = True
+                break
+        if skip_this:
+            continue
+        
+        # Track folders
+        if rel_root:
+            folders_set.add(rel_root)
+        
+        for filename in files:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in spec_extensions:
+                full_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(full_path, specs_folder)
+                
+                all_files.append({
+                    "name": filename,
+                    "path": full_path,
+                    "relative_path": relative_path,
+                    "folder": rel_root,
+                    "extension": ext,
+                    "size": os.path.getsize(full_path)
+                })
+    
+    return {
+        "specs_folder": specs_folder,
+        "total_files": len(all_files),
+        "files": all_files,
+        "folders": sorted(list(folders_set))
     }
 
 

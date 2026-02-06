@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   browseProjectFolder,
@@ -39,6 +39,15 @@ export default function SmartAnalysis({
   // Selected specs per RFI (keyed by RFI path)
   const [selectedSpecs, setSelectedSpecs] = useState<Map<string, Set<string>>>(new Map());
   
+  // All spec files for folder tree browsing
+  const [allSpecFiles, setAllSpecFiles] = useState<PathBasedSpecSuggestion[]>([]);
+  
+  // Which RFI is currently being edited in the folder tree (null = none)
+  const [browsingRfiPath, setBrowsingRfiPath] = useState<string | null>(null);
+  
+  // Expanded folders in tree view
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  
   // Analysis progress state
   const [analysisProgress, setAnalysisProgress] = useState<{
     message: string;
@@ -50,6 +59,9 @@ export default function SmartAnalysis({
   }>({ message: '', completed: 0, total: 0 });
   
   const [analyzing, setAnalyzing] = useState(false);
+  
+  // Ref to track if analysis should be cancelled
+  const cancelledRef = useRef(false);
   
   // Browse RFI files directly from filesystem (NO DATABASE REQUIRED!)
   const { data: rfiResponse, isLoading: rfiLoading } = useQuery({
@@ -63,15 +75,24 @@ export default function SmartAnalysis({
     queryFn: () => browseProjectFolder(projectId, 'submittal', true),
   });
   
-  // Combine RFIs and Submittals from filesystem
+  // Combine RFIs and Submittals from filesystem, dedupe by path
   const rfiFiles = rfiResponse?.files || [];
   const submittalFiles = submittalResponse?.files || [];
   
   // Filter to only show RFI and Submittal files based on filename patterns
-  const allDocuments = [...rfiFiles, ...submittalFiles].filter(file => {
-    const name = file.name.toLowerCase();
-    return name.includes('rfi') || name.includes('submittal');
-  });
+  // and deduplicate by file path (in case RFI and Submittal folders overlap)
+  const allDocuments = (() => {
+    const combined = [...rfiFiles, ...submittalFiles];
+    const seen = new Set<string>();
+    return combined.filter(file => {
+      const name = file.name.toLowerCase();
+      const isRfiOrSubmittal = name.includes('rfi') || name.includes('submittal');
+      if (!isRfiOrSubmittal) return false;
+      if (seen.has(file.path)) return false;
+      seen.add(file.path);
+      return true;
+    });
+  })();
   
   const isLoading = rfiLoading || submittalLoading;
   const folderError = rfiResponse?.error || submittalResponse?.error;
@@ -122,6 +143,11 @@ export default function SmartAnalysis({
       }
       
       setSuggestions(response.suggestions);
+      
+      // Store all spec files for folder tree browsing
+      if (response.all_spec_files) {
+        setAllSpecFiles(response.all_spec_files);
+      }
       
       // Initialize selected specs with AI suggestions (top 5 for each)
       const initial = new Map<string, Set<string>>();
@@ -175,6 +201,7 @@ export default function SmartAnalysis({
   const handleStartAnalysis = async () => {
     setCurrentStep('analyze');
     setAnalyzing(true);
+    cancelledRef.current = false;
     
     // Build analysis request using file paths
     const analyses = suggestions.map(s => ({
@@ -198,6 +225,17 @@ export default function SmartAnalysis({
     try {
       // Process each RFI one by one and update progress
       for (let i = 0; i < analyses.length; i++) {
+        // Check if cancelled
+        if (cancelledRef.current) {
+          setAnalysisProgress(prev => ({
+            ...prev,
+            message: 'Analysis cancelled.',
+            currentRfi: undefined,
+            currentSpec: undefined,
+          }));
+          break;
+        }
+        
         const analysis = analyses[i];
         
         setAnalysisProgress(prev => ({
@@ -218,20 +256,24 @@ export default function SmartAnalysis({
             message: `Completed ${i + 1} of ${analyses.length}`,
           }));
         } catch (err) {
+          if (cancelledRef.current) break;
           console.error(`Error analyzing ${analysis.rfi_name}:`, err);
         }
       }
       
-      // All done
-      setAnalysisProgress(prev => ({
-        ...prev,
-        message: 'Analysis complete!',
-        completed: analyses.length,
-        currentRfi: undefined,
-        currentSpec: undefined,
-      }));
+      // Check if cancelled or complete
+      if (!cancelledRef.current) {
+        setAnalysisProgress(prev => ({
+          ...prev,
+          message: 'Analysis complete!',
+          completed: analyses.length,
+          currentRfi: undefined,
+          currentSpec: undefined,
+        }));
+        
+        setCurrentStep('complete');
+      }
       
-      setCurrentStep('complete');
       queryClient.invalidateQueries({ queryKey: ['results', projectId] });
       
     } catch (err) {
@@ -247,9 +289,11 @@ export default function SmartAnalysis({
   
   // Cancel analysis
   const handleCancel = () => {
-    setCurrentStep('approve');
-    setAnalyzing(false);
-    setAnalysisProgress({ message: '', completed: 0, total: 0 });
+    cancelledRef.current = true;
+    setAnalysisProgress(prev => ({
+      ...prev,
+      message: 'Cancelling...',
+    }));
   };
   
   // Finish and close
@@ -277,6 +321,50 @@ export default function SmartAnalysis({
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+  
+  // Get all unique folders, sorted
+  const allFolders = useMemo(() => {
+    const folders = new Set<string>();
+    allSpecFiles.forEach(file => {
+      if (file.folder) {
+        // Add all parent folders too
+        const parts = file.folder.replace(/\\/g, '/').split('/');
+        let current = '';
+        parts.forEach(part => {
+          current = current ? `${current}/${part}` : part;
+          folders.add(current);
+        });
+      }
+    });
+    return Array.from(folders).sort();
+  }, [allSpecFiles]);
+  
+  // Toggle folder expansion
+  const toggleFolder = (folder: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) {
+        next.delete(folder);
+      } else {
+        next.add(folder);
+      }
+      return next;
+    });
+  };
+  
+  // Expand all / collapse all
+  const expandAllFolders = () => {
+    setExpandedFolders(new Set(allFolders));
+  };
+  
+  const collapseAllFolders = () => {
+    setExpandedFolders(new Set());
+  };
+  
+  // Get files for a specific folder (not including subfolders)
+  const getFilesInFolder = (folder: string) => {
+    return allSpecFiles.filter(f => (f.folder || '') === folder);
   };
   
   return (
@@ -465,7 +553,88 @@ export default function SmartAnalysis({
                         Please configure your project's Specs folder path.
                       </p>
                     </div>
+                  ) : browsingRfiPath ? (
+                    /* Folder Tree Browser Mode */
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between bg-primary-50 p-3 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-primary-900">
+                            Browsing specs for: {suggestions.find(s => s.rfi_path === browsingRfiPath)?.rfi_filename}
+                          </p>
+                          <p className="text-xs text-primary-700">
+                            {selectedSpecs.get(browsingRfiPath)?.size || 0} files selected
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setBrowsingRfiPath(null)}
+                          className="px-3 py-1.5 bg-white text-primary-700 rounded-lg text-sm font-medium hover:bg-primary-100 transition"
+                        >
+                          Done Browsing
+                        </button>
+                      </div>
+                      
+                      {/* Folder Tree Controls */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-stone-700">
+                          Specs Folder ({allSpecFiles.length} files)
+                        </span>
+                        <div className="flex gap-2">
+                          <button onClick={expandAllFolders} className="text-xs text-primary-600 hover:text-primary-700">
+                            Expand All
+                          </button>
+                          <button onClick={collapseAllFolders} className="text-xs text-stone-500 hover:text-stone-700">
+                            Collapse All
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Folder Tree */}
+                      <div className="border border-stone-200 rounded-xl overflow-hidden max-h-[400px] overflow-y-auto bg-white">
+                        {/* Root files */}
+                        {getFilesInFolder('').length > 0 && (
+                          <div className="border-b border-stone-100">
+                            {getFilesInFolder('').map(file => (
+                              <label
+                                key={file.path}
+                                className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-stone-50 transition text-sm ${
+                                  selectedSpecs.get(browsingRfiPath)?.has(file.path) ? 'bg-spec-50' : ''
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedSpecs.get(browsingRfiPath)?.has(file.path) || false}
+                                  onChange={() => toggleSpec(browsingRfiPath, file.path)}
+                                  className="w-3.5 h-3.5 rounded text-spec-600 focus:ring-spec-500"
+                                />
+                                <svg className="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span className="flex-1 truncate">{file.name}</span>
+                                <span className="text-xs text-stone-400">{formatSize(file.size || 0)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Folders */}
+                        {allFolders.filter(f => !f.includes('/')).map(folder => (
+                          <FolderTreeNode
+                            key={folder}
+                            folder={folder}
+                            allFolders={allFolders}
+                            allFiles={allSpecFiles}
+                            selectedSpecs={selectedSpecs.get(browsingRfiPath) || new Set()}
+                            expandedFolders={expandedFolders}
+                            onToggleFolder={toggleFolder}
+                            onToggleFile={(path) => toggleSpec(browsingRfiPath, path)}
+                            formatSize={formatSize}
+                            depth={0}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   ) : (
+                    /* Normal Suggestions View */
                     suggestions.map(suggestion => (
                       <Card key={suggestion.rfi_path} className="border-l-4 border-l-primary-500">
                         <div className="space-y-4">
@@ -482,7 +651,7 @@ export default function SmartAnalysis({
                             </div>
                             <div className="text-right">
                               <p className="text-sm text-stone-500">
-                                {suggestion.suggested_specs.length} specs found
+                                {suggestion.suggested_specs.length} specs suggested
                               </p>
                               <p className="text-xs text-stone-400">
                                 {selectedSpecs.get(suggestion.rfi_path)?.size || 0} selected
@@ -504,7 +673,7 @@ export default function SmartAnalysis({
                           {/* Spec suggestions */}
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-stone-700">Suggested Specifications</span>
+                              <span className="text-sm font-medium text-stone-700">AI Suggested Specs</span>
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => toggleAllSpecs(suggestion.rfi_path, suggestion.suggested_specs, true)}
@@ -521,8 +690,8 @@ export default function SmartAnalysis({
                               </div>
                             </div>
                             
-                            <div className="grid grid-cols-1 gap-1 max-h-48 overflow-y-auto">
-                              {suggestion.suggested_specs.map((spec) => (
+                            <div className="grid grid-cols-1 gap-1 max-h-32 overflow-y-auto">
+                              {suggestion.suggested_specs.slice(0, 10).map((spec) => (
                                 <label
                                   key={spec.path}
                                   className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition text-sm ${
@@ -539,24 +708,40 @@ export default function SmartAnalysis({
                                   />
                                   <div className="flex-1 min-w-0">
                                     <p className="font-medium text-stone-800 truncate">{spec.name}</p>
-                                    {spec.matched_terms.length > 0 && (
+                                    {spec.matched_terms && spec.matched_terms.length > 0 && (
                                       <p className="text-xs text-stone-500 truncate">
                                         Matched: {spec.matched_terms.join(', ')}
                                       </p>
                                     )}
                                   </div>
-                                  <Badge variant="spec" size="sm">
-                                    {Math.round(spec.relevance_score)}
-                                  </Badge>
+                                  {spec.relevance_score && (
+                                    <Badge variant="spec" size="sm">
+                                      {Math.round(spec.relevance_score)}
+                                    </Badge>
+                                  )}
                                 </label>
                               ))}
                             </div>
                             
                             {suggestion.suggested_specs.length === 0 && (
                               <p className="text-sm text-stone-400 text-center py-4">
-                                No matching specs found. Make sure your Specs folder is configured.
+                                No matching specs found. Use "Browse All Specs" to manually select.
                               </p>
                             )}
+                            
+                            {/* Browse All Specs Button */}
+                            <button
+                              onClick={() => {
+                                setBrowsingRfiPath(suggestion.rfi_path);
+                                expandAllFolders();
+                              }}
+                              className="mt-3 w-full py-2 px-3 border-2 border-dashed border-stone-300 rounded-lg text-sm text-stone-600 hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition flex items-center justify-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                              </svg>
+                              Browse All Specs ({allSpecFiles.length} files)
+                            </button>
                           </div>
                         </div>
                       </Card>
@@ -652,6 +837,127 @@ export default function SmartAnalysis({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Folder Tree Node Component
+function FolderTreeNode({
+  folder,
+  allFolders,
+  allFiles,
+  selectedSpecs,
+  expandedFolders,
+  onToggleFolder,
+  onToggleFile,
+  formatSize,
+  depth,
+}: {
+  folder: string;
+  allFolders: string[];
+  allFiles: PathBasedSpecSuggestion[];
+  selectedSpecs: Set<string>;
+  expandedFolders: Set<string>;
+  onToggleFolder: (folder: string) => void;
+  onToggleFile: (path: string) => void;
+  formatSize: (bytes: number) => string;
+  depth: number;
+}) {
+  const isExpanded = expandedFolders.has(folder);
+  
+  // Get direct child folders
+  const childFolders = allFolders.filter(f => {
+    if (!f.startsWith(folder + '/')) return false;
+    const remainder = f.slice(folder.length + 1);
+    return !remainder.includes('/');
+  });
+  
+  // Get files directly in this folder
+  const filesInFolder = allFiles.filter(f => (f.folder || '') === folder);
+  
+  // Get folder name (last part)
+  const folderName = folder.split('/').pop() || folder;
+  
+  // Count selected files in this folder and subfolders
+  const selectedCount = allFiles.filter(f => 
+    ((f.folder || '').startsWith(folder)) && selectedSpecs.has(f.path)
+  ).length;
+  
+  const totalCount = allFiles.filter(f => (f.folder || '').startsWith(folder)).length;
+  
+  return (
+    <div className="border-b border-stone-100 last:border-b-0">
+      {/* Folder Header */}
+      <button
+        onClick={() => onToggleFolder(folder)}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-stone-50 transition text-left"
+        style={{ paddingLeft: `${12 + depth * 16}px` }}
+      >
+        <svg
+          className={`w-4 h-4 text-stone-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z" />
+        </svg>
+        <span className="flex-1 text-sm font-medium text-stone-700">{folderName}</span>
+        {selectedCount > 0 && (
+          <span className="px-1.5 py-0.5 bg-spec-100 text-spec-700 text-xs rounded-full">
+            {selectedCount}/{totalCount}
+          </span>
+        )}
+        {selectedCount === 0 && totalCount > 0 && (
+          <span className="text-xs text-stone-400">{totalCount} files</span>
+        )}
+      </button>
+      
+      {/* Expanded Content */}
+      {isExpanded && (
+        <div>
+          {/* Files in this folder */}
+          {filesInFolder.map(file => (
+            <label
+              key={file.path}
+              className={`flex items-center gap-2 py-2 cursor-pointer hover:bg-stone-50 transition text-sm ${
+                selectedSpecs.has(file.path) ? 'bg-spec-50' : ''
+              }`}
+              style={{ paddingLeft: `${28 + depth * 16}px`, paddingRight: '12px' }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedSpecs.has(file.path)}
+                onChange={() => onToggleFile(file.path)}
+                className="w-3.5 h-3.5 rounded text-spec-600 focus:ring-spec-500"
+              />
+              <svg className="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="flex-1 truncate">{file.name}</span>
+              <span className="text-xs text-stone-400">{formatSize(file.size || 0)}</span>
+            </label>
+          ))}
+          
+          {/* Child folders */}
+          {childFolders.map(childFolder => (
+            <FolderTreeNode
+              key={childFolder}
+              folder={childFolder}
+              allFolders={allFolders}
+              allFiles={allFiles}
+              selectedSpecs={selectedSpecs}
+              expandedFolders={expandedFolders}
+              onToggleFolder={onToggleFolder}
+              onToggleFile={onToggleFile}
+              formatSize={formatSize}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

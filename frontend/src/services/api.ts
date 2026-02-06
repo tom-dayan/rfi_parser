@@ -646,8 +646,10 @@ export interface PathBasedSpecSuggestion {
   path: string;
   relative_path: string;
   extension: string;
-  relevance_score: number;
-  matched_terms: string[];
+  relevance_score?: number;
+  matched_terms?: string[];
+  folder?: string;
+  size?: number;
 }
 
 export interface PathBasedRfiSuggestions {
@@ -665,6 +667,17 @@ export interface PathBasedSuggestResponse {
   project_id: number;
   specs_folder: string;
   total_spec_files: number;
+  all_spec_files?: PathBasedSpecSuggestion[];
+  folder_structure?: Record<string, unknown>;
+  error?: string;
+}
+
+// Spec folder tree response
+export interface SpecFolderTreeResponse {
+  specs_folder: string;
+  total_files: number;
+  files: PathBasedSpecSuggestion[];
+  folders: string[];
   error?: string;
 }
 
@@ -676,6 +689,16 @@ export const suggestSpecsFromPaths = async (
   const response = await api.post<PathBasedSuggestResponse>(
     `/api/projects/${projectId}/suggest-specs-from-paths`,
     { rfi_files: rfiFiles }
+  );
+  return response.data;
+};
+
+// Get spec folder tree for browsing
+export const getSpecFolderTree = async (
+  projectId: number
+): Promise<SpecFolderTreeResponse> => {
+  const response = await api.get<SpecFolderTreeResponse>(
+    `/api/projects/${projectId}/spec-folder-tree`
   );
   return response.data;
 };

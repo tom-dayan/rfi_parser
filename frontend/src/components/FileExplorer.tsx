@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getProjectFiles, scanProjectStream, indexKnowledgeBase } from '../services/api';
 import type { ProjectFileSummary, ContentType, ScanProgressEvent, ScanResult, IndexResult } from '../types';
@@ -51,6 +51,9 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
     error: null,
   });
   const queryClient = useQueryClient();
+  
+  // Ref to store cancel function
+  const cancelScanRef = useRef<(() => void) | null>(null);
 
   const { data: files = [], isLoading } = useQuery({
     queryKey: ['files', projectId, selectedType],
@@ -67,7 +70,7 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
       error: null,
     });
 
-    scanProjectStream(projectId, async (event) => {
+    const { cancel } = scanProjectStream(projectId, async (event) => {
       setSetupState((prev) => ({
         ...prev,
         scanProgress: event,
@@ -109,6 +112,25 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
         }));
       }
     });
+    
+    // Store the cancel function
+    cancelScanRef.current = cancel;
+  }, [projectId, queryClient]);
+
+  // Cancel the current scan
+  const handleCancelScan = useCallback(() => {
+    if (cancelScanRef.current) {
+      cancelScanRef.current();
+      cancelScanRef.current = null;
+    }
+    setSetupState({
+      phase: 'idle',
+      scanProgress: null,
+      scanResult: null,
+      indexResult: null,
+      error: 'Scan cancelled by user',
+    });
+    queryClient.invalidateQueries({ queryKey: ['files', projectId] });
   }, [projectId, queryClient]);
 
   const isProcessing = setupState.phase === 'scanning' || setupState.phase === 'indexing';
@@ -214,9 +236,17 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
                   {scanProgress.phase === 'rfi' ? 'RFI' : 'Specs'}: {scanProgress.current_file}
                 </p>
               )}
-              <p className="text-xs text-blue-500 mt-1">
-                {scanProgress.current_file_index} of {scanProgress.total_files} files
-              </p>
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-xs text-blue-500">
+                  {scanProgress.current_file_index} of {scanProgress.total_files} files
+                </p>
+                <button
+                  onClick={handleCancelScan}
+                  className="text-xs text-red-600 hover:text-red-700 hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
             </>
           )}
 
