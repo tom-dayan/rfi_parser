@@ -47,7 +47,7 @@ export default function RefineMode({
 
   const steps: { id: Step; label: string; description: string }[] = [
     { id: 'review', label: 'Review', description: 'Review the current AI response' },
-    { id: 'specs', label: 'Specifications', description: 'Edit spec file selections' },
+    { id: 'specs', label: 'Project Knowledge', description: 'Edit knowledge file selections' },
     { id: 'refine', label: 'Refine', description: 'Regenerate or manually edit the response' },
     { id: 'finalize', label: 'Finalize', description: 'Review and save the final response' },
   ];
@@ -103,7 +103,7 @@ export default function RefineMode({
       setSpecsLoaded(true);
     } catch (err) {
       console.error('Failed to load spec tree:', err);
-      setSpecsError('Failed to load specifications folder. Make sure the project specs folder is accessible.');
+      setSpecsError('Failed to load project knowledge folder. Make sure the folder is accessible.');
     } finally {
       setIsLoadingSpecs(false);
     }
@@ -160,7 +160,7 @@ export default function RefineMode({
   const handleRegenerate = async () => {
     const specPaths = Array.from(selectedSpecPaths);
     if (specPaths.length === 0) {
-      setRegenerateError('Please select at least one specification file first.');
+      setRegenerateError('Please select at least one project knowledge file first.');
       return;
     }
 
@@ -301,7 +301,7 @@ export default function RefineMode({
               {result.spec_references && result.spec_references.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-slate-700 mb-2">
-                    Specification References ({result.spec_references.length})
+                    Knowledge References ({result.spec_references.length})
                   </h4>
                   <div className="flex flex-wrap gap-2">
                     {result.spec_references.map((ref, idx) => (
@@ -329,7 +329,7 @@ export default function RefineMode({
 
               <div className="p-4 bg-violet-50 border border-violet-200 rounded-xl">
                 <p className="text-sm text-violet-700">
-                  <strong>Next:</strong> Edit your specification file selections, then regenerate the AI response with updated context.
+                  <strong>Next:</strong> Edit your project knowledge file selections, then regenerate the AI response with updated context.
                 </p>
               </div>
             </div>
@@ -339,16 +339,16 @@ export default function RefineMode({
           {currentStep === 'specs' && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900 mb-1">Edit Specification Files</h3>
+                <h3 className="text-lg font-semibold text-slate-900 mb-1">Edit Project Knowledge Files</h3>
                 <p className="text-sm text-slate-600">
-                  Add or remove spec files to influence the AI response. Changes here will be used when you regenerate in the next step.
+                  Add or remove project knowledge files to influence the AI response. Changes here will be used when you regenerate in the next step.
                 </p>
               </div>
 
               {isLoadingSpecs && (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-violet-600" />
-                  <span className="text-slate-500">Loading specifications folder...</span>
+                  <span className="text-slate-500">Loading project knowledge folder...</span>
                   <span className="text-xs text-slate-400">This may take a moment for large project folders</span>
                 </div>
               )}
@@ -371,7 +371,7 @@ export default function RefineMode({
                   <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3 border border-slate-200">
                     <div className="flex items-center gap-3">
                       <span className="text-sm text-slate-600">
-                        <strong className="text-violet-600">{selectedSpecPaths.size}</strong> of {allSpecFiles.length} specs selected
+                        <strong className="text-violet-600">{selectedSpecPaths.size}</strong> of {allSpecFiles.length} files selected
                       </span>
                       {hasSpecChanges && (
                         <span className="inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">
@@ -401,7 +401,7 @@ export default function RefineMode({
                       type="text"
                       value={specSearchQuery}
                       onChange={(e) => setSpecSearchQuery(e.target.value)}
-                      placeholder="Search spec files..."
+                      placeholder="Search knowledge files..."
                       className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
                     />
                   </div>
@@ -490,7 +490,7 @@ export default function RefineMode({
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900 mb-1">Refine Response</h3>
                   <p className="text-sm text-slate-600">
-                    Regenerate with AI using your updated specs, or manually edit the text below.
+                    Regenerate with AI using your updated files, or manually edit the text below.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -522,12 +522,12 @@ export default function RefineMode({
               {/* Spec summary for context */}
               <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Spec files used</span>
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Knowledge files used</span>
                   <button
                     onClick={() => setCurrentStep('specs')}
                     className="text-xs text-violet-600 hover:text-violet-800 font-medium"
                   >
-                    Edit specs
+                    Edit files
                   </button>
                 </div>
                 {selectedSpecPaths.size > 0 ? (
@@ -547,11 +547,11 @@ export default function RefineMode({
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400 mt-1">No specs selected. Go to the Specifications step to add some.</p>
+                  <p className="text-xs text-slate-400 mt-1">No files selected. Go to the Project Knowledge step to add some.</p>
                 )}
                 {hasSpecChanges && (
                   <p className="text-xs text-amber-600 mt-2">
-                    Spec selections have changed. Click "Regenerate" to get an updated AI response.
+                    File selections have changed. Click "Regenerate" to get an updated AI response.
                   </p>
                 )}
               </div>
@@ -569,7 +569,7 @@ export default function RefineMode({
                   disabled={isRegenerating}
                 />
                 <p className="text-xs text-slate-400 mt-1">
-                  Guide the AI on how to approach the response. These instructions are sent alongside the document and specs.
+                  Guide the AI on how to approach the response. These instructions are sent alongside the document and knowledge files.
                 </p>
               </div>
 
@@ -585,7 +585,7 @@ export default function RefineMode({
                     <div className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-violet-300 border-t-violet-600" />
                     <div>
                       <p className="text-sm font-medium text-violet-800">Regenerating AI response...</p>
-                      <p className="text-xs text-violet-600 mt-0.5">Parsing documents and analyzing with updated specifications</p>
+                      <p className="text-xs text-violet-600 mt-0.5">Parsing documents and analyzing with updated knowledge files</p>
                     </div>
                   </div>
                 </div>
@@ -618,7 +618,7 @@ export default function RefineMode({
 
               {selectedSpecPaths.size > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-slate-700 mb-2">Specifications Used ({selectedSpecPaths.size})</h4>
+                  <h4 className="text-sm font-medium text-slate-700 mb-2">Knowledge Files Used ({selectedSpecPaths.size})</h4>
                   <div className="flex flex-wrap gap-2">
                     {Array.from(selectedSpecPaths).map((path, idx) => {
                       const name = path.split('/').pop() || path;

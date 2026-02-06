@@ -151,7 +151,7 @@ export default function GlobalSearch({ isOpen, onClose, onSelectFile }: GlobalSe
                 setQuery(e.target.value);
                 setSelectedIndex(0);
               }}
-              placeholder="Search files, drawings, specifications..."
+              placeholder="Search files, drawings, project knowledge..."
               className="w-full pl-14 pr-16 py-5 text-lg focus:outline-none placeholder-stone-400"
             />
             <div className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2">

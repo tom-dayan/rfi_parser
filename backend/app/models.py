@@ -17,6 +17,8 @@ class Project(Base):
     
     # Exclude folders from spec suggestions (JSON list of folder names/paths)
     exclude_folders = Column(JSON, nullable=True, default=list)
+    # Must-include folders for Smart Analysis (JSON list of folder names/paths)
+    include_folders = Column(JSON, nullable=True, default=list)
 
     # Knowledge base status
     kb_indexed = Column(Boolean, default=False)  # Whether specs are indexed in vector store

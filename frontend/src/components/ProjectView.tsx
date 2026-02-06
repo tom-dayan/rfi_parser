@@ -60,7 +60,7 @@ export default function ProjectView({ projectId, onBack }: ProjectViewProps) {
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    {project.spec_count} Specs
+                    {project.spec_count} Knowledge
                   </span>
                   {project.result_count > 0 && (
                     <span className="flex items-center gap-1">
@@ -239,6 +239,9 @@ function ProjectSettingsModal({
   const [excludeFolders, setExcludeFolders] = useState(
     (project.exclude_folders || []).join('\n')
   );
+  const [includeFolders, setIncludeFolders] = useState(
+    (project.include_folders || []).join('\n')
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -250,12 +253,17 @@ function ProjectSettingsModal({
         .split('\n')
         .map(f => f.trim())
         .filter(f => f.length > 0);
+      const includeList = includeFolders
+        .split('\n')
+        .map(f => f.trim())
+        .filter(f => f.length > 0);
       
       await updateProject(project.id, {
         name,
         rfi_folder_path: rfiFolder,
         specs_folder_path: specsFolder,
         exclude_folders: excludeList,
+        include_folders: includeList,
       });
       onSave();
     } catch (err) {
@@ -318,7 +326,7 @@ function ProjectSettingsModal({
           {/* Specs Folder */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
-              Specifications Folder Path
+              Project Knowledge Folder Path
             </label>
             <input
               type="text"
@@ -331,16 +339,33 @@ function ProjectSettingsModal({
           {/* Exclude Folders */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
-              Exclude Folders from Spec Suggestions
+              Exclude Folders from Knowledge Suggestions
             </label>
             <p className="text-xs text-slate-500 mb-2">
-              Enter folder names to exclude (one per line). These folders will be skipped when suggesting specs.
-              Useful for excluding RFI/Submittal folders that may be inside the specs folder.
+              Enter folder names to exclude (one per line). These folders will be skipped when suggesting project knowledge files.
+              Useful for excluding RFI/Submittal folders that may be inside the knowledge folder.
             </p>
             <textarea
               value={excludeFolders}
               onChange={(e) => setExcludeFolders(e.target.value)}
               placeholder="RFIs&#10;Submittals&#10;Archive"
+              rows={4}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+            />
+          </div>
+          
+          {/* Must-Include Folders */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Must-Include Folders for Smart Analysis
+            </label>
+            <p className="text-xs text-slate-500 mb-2">
+              Enter folder names or full paths (one per line). Files in these folders will always be prioritized in AI suggestions during Smart Analysis.
+            </p>
+            <textarea
+              value={includeFolders}
+              onChange={(e) => setIncludeFolders(e.target.value)}
+              placeholder="General&#10;Division 01&#10;Key Specs"
               rows={4}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
             />

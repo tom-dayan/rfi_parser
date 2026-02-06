@@ -40,7 +40,8 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
         name=project.name,
         rfi_folder_path=project.rfi_folder_path,
         specs_folder_path=project.specs_folder_path,
-        exclude_folders=project.exclude_folders or []
+        exclude_folders=project.exclude_folders or [],
+        include_folders=project.include_folders or []
     )
     db.add(db_project)
     db.commit()
@@ -286,6 +287,8 @@ def update_project(project_id: int, update: ProjectUpdate, db: Session = Depends
         project.specs_folder_path = update.specs_folder_path
     if update.exclude_folders is not None:
         project.exclude_folders = update.exclude_folders
+    if update.include_folders is not None:
+        project.include_folders = update.include_folders
 
     db.commit()
     db.refresh(project)

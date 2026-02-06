@@ -44,6 +44,12 @@ def run_migrations():
             "column": "source_file_path",
             "sql": "ALTER TABLE processing_results ADD COLUMN source_file_path VARCHAR(1024)"
         },
+        # Add include_folders column to projects table
+        {
+            "table": "projects",
+            "column": "include_folders",
+            "sql": "ALTER TABLE projects ADD COLUMN include_folders TEXT"
+        },
     ]
     
     with engine.connect() as conn:

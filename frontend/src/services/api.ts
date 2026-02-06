@@ -695,6 +695,36 @@ export interface PathBasedSuggestResponse {
   error?: string;
 }
 
+// Project folder tree response (combined RFI + knowledge folders)
+export interface ProjectFolderTreeFile {
+  name: string;
+  path: string;
+  relative_path: string;
+  folder: string;
+  extension: string;
+  size: number;
+  source: string;
+}
+
+export interface ProjectFolderTreeResponse {
+  rfi_folder: string;
+  specs_folder: string;
+  rfi_files: ProjectFolderTreeFile[];
+  rfi_folders: string[];
+  spec_files: ProjectFolderTreeFile[];
+  spec_folders: string[];
+  total_files: number;
+}
+
+export const getProjectFolderTree = async (
+  projectId: number
+): Promise<ProjectFolderTreeResponse> => {
+  const response = await api.get<ProjectFolderTreeResponse>(
+    `/api/projects/${projectId}/project-folder-tree`
+  );
+  return response.data;
+};
+
 // Spec folder tree response
 export interface SpecFolderTreeResponse {
   specs_folder: string;

@@ -93,7 +93,7 @@ export default function ProjectDiscovery({ onProjectCreated, onClose }: ProjectD
         </CardHeader>
 
         <p className="text-sm text-stone-500 mb-6">
-          Scan your shared folders to automatically find project directories with RFIs, submittals, and specifications.
+          Scan your shared folders to automatically find project directories with RFIs, submittals, and project knowledge.
         </p>
 
         {/* Root Path Input */}
@@ -230,7 +230,7 @@ export default function ProjectDiscovery({ onProjectCreated, onClose }: ProjectD
                       )}
                       {candidate.specs_folder && (
                         <Badge variant="spec" size="sm">
-                          {candidate.spec_count} Specs
+                          {candidate.spec_count} Knowledge
                         </Badge>
                       )}
                       <Badge variant="default" size="sm">
@@ -310,7 +310,7 @@ export default function ProjectDiscovery({ onProjectCreated, onClose }: ProjectD
               </div>
               <div>
                 <p className="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">
-                  Specifications Folder
+                  Project Knowledge Folder
                 </p>
                 <p className="text-sm text-stone-700 break-all">
                   {selectedCandidate.specs_folder || selectedCandidate.root_path}

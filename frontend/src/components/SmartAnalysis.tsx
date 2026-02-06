@@ -242,7 +242,7 @@ export default function SmartAnalysis({
           ...prev,
           message: `Analyzing ${analysis.rfi_name}...`,
           currentRfi: analysis.rfi_name,
-          currentSpec: `Parsing ${analysis.spec_file_paths.length} spec files...`,
+          currentSpec: `Parsing ${analysis.spec_file_paths.length} knowledge files...`,
           completed: i,
         }));
         
@@ -399,7 +399,7 @@ export default function SmartAnalysis({
             <StepProgress
               steps={[
                 { id: 'select', label: 'Select Documents' },
-                { id: 'approve', label: 'Review Specs' },
+                { id: 'approve', label: 'Review Files' },
                 { id: 'analyze', label: 'Analyze' },
                 { id: 'complete', label: 'Done' },
               ]}
@@ -514,7 +514,7 @@ export default function SmartAnalysis({
                   disabled={selectedRfiPaths.size === 0 || loadingSuggestions}
                   loading={loadingSuggestions}
                 >
-                  {loadingSuggestions ? 'Finding specs...' : 'Find Related Specs'}
+                  {loadingSuggestions ? 'Finding files...' : 'Find Related Files'}
                 </Button>
               </div>
             </div>
@@ -526,16 +526,16 @@ export default function SmartAnalysis({
               {loadingSuggestions ? (
                 <div className="text-center py-12">
                   <div className="inline-block animate-spin rounded-full h-10 w-10 border-2 border-stone-300 border-t-primary-600" />
-                  <p className="text-stone-700 font-medium mt-4">AI is finding relevant specifications...</p>
+                  <p className="text-stone-700 font-medium mt-4">AI is finding relevant project knowledge files...</p>
                   <p className="text-sm text-stone-500 mt-1">Analyzing document keywords and references</p>
                 </div>
               ) : (
                 <>
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="font-medium text-stone-900">Review Suggested Specs</h3>
+                      <h3 className="font-medium text-stone-900">Review Suggested Files</h3>
                       <p className="text-sm text-stone-500">
-                        AI found specifications that may be relevant. Adjust selections as needed.
+                        AI found project knowledge files that may be relevant. Adjust selections as needed.
                       </p>
                     </div>
                     <button
@@ -548,9 +548,9 @@ export default function SmartAnalysis({
                   
                   {suggestions.length === 0 ? (
                     <div className="text-center py-12 bg-amber-50 rounded-xl">
-                      <p className="text-amber-800">No specs folder configured or no spec files found.</p>
+                      <p className="text-amber-800">No project knowledge folder configured or no files found.</p>
                       <p className="text-sm text-amber-600 mt-1">
-                        Please configure your project's Specs folder path.
+                        Please configure your project's knowledge folder path.
                       </p>
                     </div>
                   ) : browsingRfiPath ? (
@@ -559,7 +559,7 @@ export default function SmartAnalysis({
                       <div className="flex items-center justify-between bg-primary-50 p-3 rounded-lg">
                         <div>
                           <p className="text-sm font-medium text-primary-900">
-                            Browsing specs for: {suggestions.find(s => s.rfi_path === browsingRfiPath)?.rfi_filename}
+                            Browsing files for: {suggestions.find(s => s.rfi_path === browsingRfiPath)?.rfi_filename}
                           </p>
                           <p className="text-xs text-primary-700">
                             {selectedSpecs.get(browsingRfiPath)?.size || 0} files selected
@@ -576,7 +576,7 @@ export default function SmartAnalysis({
                       {/* Folder Tree Controls */}
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-stone-700">
-                          Specs Folder ({allSpecFiles.length} files)
+                          Knowledge Folder ({allSpecFiles.length} files)
                         </span>
                         <div className="flex gap-2">
                           <button onClick={expandAllFolders} className="text-xs text-primary-600 hover:text-primary-700">
@@ -670,7 +670,7 @@ export default function SmartAnalysis({
                             </div>
                             <div className="text-right">
                               <p className="text-sm text-stone-500">
-                                {suggestion.suggested_specs.length} specs suggested
+                                {suggestion.suggested_specs.length} files suggested
                               </p>
                               <p className="text-xs text-stone-400">
                                 {selectedSpecs.get(suggestion.rfi_path)?.size || 0} selected
@@ -692,7 +692,7 @@ export default function SmartAnalysis({
                           {/* Spec suggestions */}
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-stone-700">AI Suggested Specs</span>
+                              <span className="text-sm font-medium text-stone-700">AI Suggested Files</span>
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => toggleAllSpecs(suggestion.rfi_path, suggestion.suggested_specs, true)}
@@ -744,7 +744,7 @@ export default function SmartAnalysis({
                             
                             {suggestion.suggested_specs.length === 0 && (
                               <p className="text-sm text-stone-400 text-center py-4">
-                                No matching specs found. Use "Browse All Specs" to manually select.
+                                No matching files found. Use "Browse All Files" to manually select.
                               </p>
                             )}
                             
@@ -759,7 +759,7 @@ export default function SmartAnalysis({
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                               </svg>
-                              Browse All Specs ({allSpecFiles.length} files)
+                              Browse All Files ({allSpecFiles.length} files)
                             </button>
                           </div>
                         </div>

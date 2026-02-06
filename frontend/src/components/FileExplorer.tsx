@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getProjectFiles, scanProjectStream, indexKnowledgeBase } from '../services/api';
+import { getProjectFiles, scanProjectStream, indexKnowledgeBase, getProjectFolderTree, type ProjectFolderTreeFile } from '../services/api';
 import type { ProjectFileSummary, ContentType, ScanProgressEvent, ScanResult, IndexResult } from '../types';
 
 interface FileExplorerProps {
@@ -10,7 +10,7 @@ interface FileExplorerProps {
 const contentTypeLabels: Record<ContentType, string> = {
   rfi: 'RFIs',
   submittal: 'Submittals',
-  specification: 'Specifications',
+  specification: 'Project Knowledge',
   drawing: 'Drawings',
   image: 'Images',
   other: 'Other Files',
@@ -43,6 +43,7 @@ interface SetupState {
 
 export default function FileExplorer({ projectId }: FileExplorerProps) {
   const [selectedType, setSelectedType] = useState<ContentType | 'all'>('all');
+  const [viewMode, setViewMode] = useState<'indexed' | 'browse'>('indexed');
   const [setupState, setSetupState] = useState<SetupState>({
     phase: 'idle',
     scanProgress: null,
@@ -133,6 +134,14 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
     queryClient.invalidateQueries({ queryKey: ['files', projectId] });
   }, [projectId, queryClient]);
 
+  // Fetch folder tree for browse mode
+  const { data: folderTree, isLoading: treeLoading } = useQuery({
+    queryKey: ['project-folder-tree', projectId],
+    queryFn: () => getProjectFolderTree(projectId),
+    enabled: viewMode === 'browse',
+    staleTime: 5 * 60 * 1000, // 5 min
+  });
+
   const isProcessing = setupState.phase === 'scanning' || setupState.phase === 'indexing';
 
   // Group files by content type
@@ -161,7 +170,28 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-slate-900">Project Files</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">Project Files</h2>
+          {/* View mode toggle */}
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('indexed')}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+                viewMode === 'indexed' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Indexed
+            </button>
+            <button
+              onClick={() => setViewMode('browse')}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+                viewMode === 'browse' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Browse Folders
+            </button>
+          </div>
+        </div>
         <button
           onClick={handleScanAndIndex}
           disabled={isProcessing}
@@ -233,7 +263,7 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
               </div>
               {scanProgress.current_file && (
                 <p className="text-xs text-blue-600 mt-2 truncate">
-                  {scanProgress.phase === 'rfi' ? 'RFI' : 'Specs'}: {scanProgress.current_file}
+                  {scanProgress.phase === 'rfi' ? 'RFI' : 'Knowledge'}: {scanProgress.current_file}
                 </p>
               )}
               <div className="flex items-center justify-between mt-2">
@@ -253,7 +283,7 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
           {/* Indexing progress */}
           {setupState.phase === 'indexing' && (
             <div className="text-sm text-blue-800">
-              <p>Building knowledge base from specifications...</p>
+              <p>Building knowledge base from project files...</p>
               <p className="text-xs text-blue-600 mt-1">This may take a moment for large documents.</p>
             </div>
           )}
@@ -280,76 +310,84 @@ export default function FileExplorer({ projectId }: FileExplorerProps) {
             <p>Found {setupState.scanResult.files_found} files (Added: {setupState.scanResult.files_added}, Updated: {setupState.scanResult.files_updated})</p>
           )}
           {setupState.indexResult && (
-            <p>Indexed {setupState.indexResult.files_indexed} specs ({setupState.indexResult.chunks_created} chunks)</p>
+            <p>Indexed {setupState.indexResult.files_indexed} files ({setupState.indexResult.chunks_created} chunks)</p>
           )}
           <p className="text-xs mt-2 text-green-600">You can now process RFIs and Submittals from the Results tab.</p>
         </div>
       )}
 
-      {/* Filter tabs */}
-      <div className="flex gap-2 mb-6 flex-wrap">
-        <FilterButton
-          label="All"
-          count={typeCounts.all}
-          active={selectedType === 'all'}
-          onClick={() => setSelectedType('all')}
-        />
-        <FilterButton
-          label="RFIs"
-          count={typeCounts.rfi}
-          active={selectedType === 'rfi'}
-          onClick={() => setSelectedType('rfi')}
-          color="blue"
-        />
-        <FilterButton
-          label="Submittals"
-          count={typeCounts.submittal}
-          active={selectedType === 'submittal'}
-          onClick={() => setSelectedType('submittal')}
-          color="indigo"
-        />
-        <FilterButton
-          label="Specs"
-          count={typeCounts.specification}
-          active={selectedType === 'specification'}
-          onClick={() => setSelectedType('specification')}
-          color="green"
-        />
-        <FilterButton
-          label="Drawings"
-          count={typeCounts.drawing}
-          active={selectedType === 'drawing'}
-          onClick={() => setSelectedType('drawing')}
-          color="purple"
-        />
-        <FilterButton
-          label="Images"
-          count={typeCounts.image}
-          active={selectedType === 'image'}
-          onClick={() => setSelectedType('image')}
-          color="yellow"
-        />
-      </div>
+      {viewMode === 'indexed' ? (
+        <>
+          {/* Filter tabs */}
+          <div className="flex gap-2 mb-6 flex-wrap">
+            <FilterButton
+              label="All"
+              count={typeCounts.all}
+              active={selectedType === 'all'}
+              onClick={() => setSelectedType('all')}
+            />
+            <FilterButton
+              label="RFIs"
+              count={typeCounts.rfi}
+              active={selectedType === 'rfi'}
+              onClick={() => setSelectedType('rfi')}
+              color="blue"
+            />
+            <FilterButton
+              label="Submittals"
+              count={typeCounts.submittal}
+              active={selectedType === 'submittal'}
+              onClick={() => setSelectedType('submittal')}
+              color="indigo"
+            />
+            <FilterButton
+              label="Knowledge"
+              count={typeCounts.specification}
+              active={selectedType === 'specification'}
+              onClick={() => setSelectedType('specification')}
+              color="green"
+            />
+            <FilterButton
+              label="Drawings"
+              count={typeCounts.drawing}
+              active={selectedType === 'drawing'}
+              onClick={() => setSelectedType('drawing')}
+              color="purple"
+            />
+            <FilterButton
+              label="Images"
+              count={typeCounts.image}
+              active={selectedType === 'image'}
+              onClick={() => setSelectedType('image')}
+              color="yellow"
+            />
+          </div>
 
-      {/* File list */}
-      {isLoading ? (
-        <div className="text-center py-8">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-blue-600" />
-          <p className="text-gray-600 mt-2">Loading files...</p>
-        </div>
-      ) : files.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
-          </svg>
-          <p className="mt-2">No files found. Click "Rescan Folders" to index files.</p>
-        </div>
+          {/* File list */}
+          {isLoading ? (
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-blue-600" />
+              <p className="text-gray-600 mt-2">Loading files...</p>
+            </div>
+          ) : files.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+              </svg>
+              <p className="mt-2">No indexed files yet.</p>
+              <p className="text-sm mt-1">Click "Scan & Index" to index files, or switch to <button onClick={() => setViewMode('browse')} className="text-blue-600 hover:underline font-medium">Browse Folders</button> to see all project files.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-200">
+              {files.map((file) => (
+                <FileRow key={file.id} file={file} />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
-        <div className="divide-y divide-gray-200">
-          {files.map((file) => (
-            <FileRow key={file.id} file={file} />
-          ))}
-        </div>
+        /* Browse Folders View */
+        <FolderTreeBrowser treeData={folderTree} isLoading={treeLoading} />
       )}
     </div>
   );
@@ -417,6 +455,213 @@ function FileRow({ file }: { file: ProjectFileSummary }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+function FolderTreeBrowser({ treeData, isLoading }: { treeData?: import('../services/api').ProjectFolderTreeResponse; isLoading: boolean }) {
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [activeSection, setActiveSection] = useState<'rfi' | 'specs'>('rfi');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const toggleFolder = useCallback((folder: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  }, []);
+
+  const files = activeSection === 'rfi' ? treeData?.rfi_files || [] : treeData?.spec_files || [];
+  const folders = activeSection === 'rfi' ? treeData?.rfi_folders || [] : treeData?.spec_folders || [];
+  const folderLabel = activeSection === 'rfi' ? treeData?.rfi_folder : treeData?.specs_folder;
+
+  // Filter files by search
+  const filteredFiles = useMemo(() => {
+    if (!searchQuery.trim()) return files;
+    const q = searchQuery.toLowerCase();
+    return files.filter(f => f.name.toLowerCase().includes(q) || f.relative_path.toLowerCase().includes(q));
+  }, [files, searchQuery]);
+
+  // Build folder tree structure
+  const rootFiles = useMemo(() => filteredFiles.filter(f => !f.folder), [filteredFiles]);
+  const topFolders = useMemo(() => {
+    const tops = new Set<string>();
+    folders.forEach(f => {
+      const first = f.split('/')[0];
+      tops.add(first);
+    });
+    return Array.from(tops).sort();
+  }, [folders]);
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-12">
+        <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-blue-600" />
+        <p className="text-gray-600 mt-3">Loading project folders...</p>
+      </div>
+    );
+  }
+
+  if (!treeData) {
+    return (
+      <div className="text-center py-8 text-gray-500">
+        <p>Unable to load folder tree.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Section toggle */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="flex bg-slate-100 rounded-lg p-0.5">
+          <button
+            onClick={() => { setActiveSection('rfi'); setSearchQuery(''); }}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+              activeSection === 'rfi' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            RFI / Submittals ({treeData.rfi_files.length})
+          </button>
+          <button
+            onClick={() => { setActiveSection('specs'); setSearchQuery(''); }}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+              activeSection === 'specs' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Project Knowledge ({treeData.spec_files.length})
+          </button>
+        </div>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search files..."
+          className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+      </div>
+
+      {/* Folder path display */}
+      {folderLabel && (
+        <p className="text-xs text-slate-400 mb-3 font-mono truncate" title={folderLabel}>
+          {folderLabel}
+        </p>
+      )}
+
+      {/* Tree content */}
+      <div className="border border-slate-200 rounded-lg max-h-[500px] overflow-y-auto">
+        {filteredFiles.length === 0 ? (
+          <div className="text-center py-8 text-slate-400 text-sm">
+            {searchQuery ? 'No files match your search.' : 'No files found in this folder.'}
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {/* Root files */}
+            {rootFiles.map(file => (
+              <BrowseFileRow key={file.path} file={file} />
+            ))}
+            {/* Top-level folders */}
+            {!searchQuery && topFolders.map(folder => (
+              <BrowseFolderNode
+                key={folder}
+                folder={folder}
+                allFiles={filteredFiles}
+                allFolders={folders}
+                expandedFolders={expandedFolders}
+                onToggle={toggleFolder}
+                depth={0}
+              />
+            ))}
+            {/* When searching, just show flat list */}
+            {searchQuery && filteredFiles.filter(f => f.folder).map(file => (
+              <BrowseFileRow key={file.path} file={file} showFolder />
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-slate-400 mt-2">
+        {filteredFiles.length} files • {folders.length} folders
+      </p>
+    </div>
+  );
+}
+
+function BrowseFolderNode({ folder, allFiles, allFolders, expandedFolders, onToggle, depth }: {
+  folder: string;
+  allFiles: ProjectFolderTreeFile[];
+  allFolders: string[];
+  expandedFolders: Set<string>;
+  onToggle: (f: string) => void;
+  depth: number;
+}) {
+  const isExpanded = expandedFolders.has(folder);
+  const filesInFolder = allFiles.filter(f => f.folder === folder);
+  const childFolders = allFolders.filter(f => {
+    if (!f.startsWith(folder + '/')) return false;
+    const rest = f.slice(folder.length + 1);
+    return !rest.includes('/');
+  });
+  const totalCount = allFiles.filter(f => f.folder === folder || f.folder.startsWith(folder + '/')).length;
+  const folderName = folder.includes('/') ? folder.split('/').pop()! : folder;
+
+  return (
+    <div>
+      <button
+        onClick={() => onToggle(folder)}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 transition text-left"
+        style={{ paddingLeft: `${12 + depth * 16}px` }}
+      >
+        <svg className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+        </svg>
+        <span className="text-sm font-medium text-slate-700 truncate">{folderName}</span>
+        <span className="text-xs text-slate-400 ml-auto">{totalCount}</span>
+      </button>
+      {isExpanded && (
+        <div>
+          {filesInFolder.map(file => (
+            <BrowseFileRow key={file.path} file={file} depth={depth + 1} />
+          ))}
+          {childFolders.map(child => (
+            <BrowseFolderNode
+              key={child}
+              folder={child}
+              allFiles={allFiles}
+              allFolders={allFolders}
+              expandedFolders={expandedFolders}
+              onToggle={onToggle}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BrowseFileRow({ file, depth = 0, showFolder = false }: { file: ProjectFolderTreeFile; depth?: number; showFolder?: boolean }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 transition"
+      style={{ paddingLeft: `${28 + depth * 16}px` }}
+    >
+      <svg className="w-4 h-4 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+      </svg>
+      <span className="text-sm text-slate-700 truncate flex-1" title={file.relative_path}>
+        {file.name}
+      </span>
+      {showFolder && file.folder && (
+        <span className="text-xs text-slate-400 truncate max-w-[200px]" title={file.folder}>
+          {file.folder}
+        </span>
+      )}
+      <span className="text-xs text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
     </div>
   );
 }

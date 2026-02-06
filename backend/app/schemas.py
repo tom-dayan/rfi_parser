@@ -20,14 +20,16 @@ class ProjectCreate(BaseModel):
     name: str
     rfi_folder_path: str
     specs_folder_path: str
-    exclude_folders: Optional[list[str]] = None  # Folders to exclude from spec suggestions
+    exclude_folders: Optional[list[str]] = None  # Folders to exclude from suggestions
+    include_folders: Optional[list[str]] = None  # Must-include folders for Smart Analysis
 
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     rfi_folder_path: Optional[str] = None
     specs_folder_path: Optional[str] = None
-    exclude_folders: Optional[list[str]] = None  # Folders to exclude from spec suggestions
+    exclude_folders: Optional[list[str]] = None  # Folders to exclude from suggestions
+    include_folders: Optional[list[str]] = None  # Must-include folders for Smart Analysis
 
 
 class Project(BaseModel):
@@ -38,6 +40,7 @@ class Project(BaseModel):
     created_date: datetime
     last_scanned: Optional[datetime] = None
     exclude_folders: Optional[list[str]] = None
+    include_folders: Optional[list[str]] = None
     kb_indexed: bool = False
     kb_last_indexed: Optional[datetime] = None
     kb_document_count: int = 0

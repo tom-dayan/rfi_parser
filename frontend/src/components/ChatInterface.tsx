@@ -188,12 +188,12 @@ export default function ChatInterface({ projectId, projectName, onClose, onActio
             </div>
             <h4 className="font-medium text-stone-900 mb-2">Ask me anything</h4>
             <p className="text-sm text-stone-500 max-w-xs mx-auto">
-              I can help you find information, search drawings, specs, and answer questions about {projectName ? 'this project' : 'your documents'}.
+              I can help you find information, search drawings, project files, and answer questions about {projectName ? 'this project' : 'your documents'}.
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
               {[
                 'Find door details',
-                'Waterproofing specs',
+                'Waterproofing details',
                 'Recent RFIs',
               ].map((suggestion) => (
                 <button

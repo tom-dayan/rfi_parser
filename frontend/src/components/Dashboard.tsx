@@ -306,7 +306,7 @@ function ResultCard({
       {result.spec_references && result.spec_references.length > 0 && (
         <div className="mb-4">
           <h4 className="text-sm font-medium text-gray-700 mb-2">
-            Specification References {hasMoreRefs && <span className="text-gray-400">({result.spec_references.length})</span>}
+            Knowledge References {hasMoreRefs && <span className="text-gray-400">({result.spec_references.length})</span>}
           </h4>
           <div className="space-y-2">
             {result.spec_references.slice(0, 2).map((ref, idx) => (
@@ -560,12 +560,12 @@ function ResultDetailModal({
             </div>
           )}
 
-          {/* Specification References */}
+          {/* Knowledge References */}
           {result.spec_references && result.spec_references.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">
-                  Specification References ({result.spec_references.length})
+                  Knowledge References ({result.spec_references.length})
                 </h3>
               </div>
               <div className="space-y-3">

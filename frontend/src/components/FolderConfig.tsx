@@ -156,7 +156,7 @@ export default function FolderConfig({ onProjectCreated, onCancel }: FolderConfi
         {/* Specs Folder */}
         <div>
           <label className="block text-sm font-medium text-stone-700 mb-2">
-            Specifications Folder
+            Project Knowledge Folder
           </label>
           <div className="flex gap-2">
             <input

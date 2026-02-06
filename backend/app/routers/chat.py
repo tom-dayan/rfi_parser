@@ -253,11 +253,13 @@ async def send_message(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        # Use knowledge base for semantic search
+        # Use knowledge base for semantic search if indexed
         kb = get_knowledge_base(message.project_id)
+        kb_used = False
         if kb and project.kb_indexed:
             search_results = kb.search_with_context(message.content, n_results=8)
             if search_results:
+                kb_used = True
                 # Score and sort by relevance
                 scored_results = []
                 for r in search_results:
@@ -277,6 +279,20 @@ async def send_message(
                         "filename": r["source"],
                         "section": r.get("section"),
                         "relevance": r.get("score", 0),
+                    })
+        
+        # On-demand fallback: if KB not indexed, search and parse files directly
+        if not kb_used:
+            on_demand_results = await _on_demand_search(
+                project, search_terms, message.content
+            )
+            if on_demand_results:
+                for od in on_demand_results:
+                    context += f"\n\n---\n**Document:** {od['filename']}\n**Source:** {od['source']}\n\n{od['text']}\n---"
+                    sources.append({
+                        "filename": od["filename"],
+                        "path": od.get("path"),
+                        "relevance": od.get("score", 0),
                     })
     else:
         # Global search using metadata index (lightweight, no file parsing)
@@ -461,6 +477,77 @@ async def clear_history(session_id: str):
     if session_id in _sessions:
         del _sessions[session_id]
     return {"status": "cleared"}
+
+
+async def _on_demand_search(project, search_terms: list[str], query: str) -> list[dict]:
+    """
+    On-demand file search and parsing when knowledge base isn't indexed.
+    Walks the project's knowledge folder, finds files by name matching,
+    and parses the top matches on the fly.
+    """
+    import os
+    from ..services.parsers import get_parser_registry
+    
+    specs_folder = project.specs_folder_path
+    rfi_folder = project.rfi_folder_path
+    
+    if not search_terms:
+        return []
+    
+    doc_extensions = {'.pdf', '.docx', '.doc', '.txt'}
+    candidates = []
+    
+    # Walk both project folders
+    for folder_path, folder_label in [(specs_folder, "Knowledge"), (rfi_folder, "RFI/Submittals")]:
+        if not folder_path or not os.path.exists(folder_path):
+            continue
+        
+        try:
+            for root, dirs, files in os.walk(folder_path):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                for filename in files:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext not in doc_extensions:
+                        continue
+                    
+                    # Score by filename relevance
+                    score = _score_file_relevance(filename, "", search_terms)
+                    if score > 0:
+                        candidates.append({
+                            "path": os.path.join(root, filename),
+                            "filename": filename,
+                            "score": score,
+                            "source": folder_label,
+                        })
+        except OSError:
+            continue
+    
+    if not candidates:
+        return []
+    
+    # Sort by score, take top 3 for parsing (balance speed vs context)
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    top = candidates[:3]
+    
+    # Parse the top matches on demand
+    parser_registry = get_parser_registry()
+    results = []
+    
+    for candidate in top:
+        try:
+            parse_result = parser_registry.parse(candidate["path"])
+            if parse_result.success and parse_result.text_content:
+                results.append({
+                    "filename": candidate["filename"],
+                    "path": candidate["path"],
+                    "source": candidate["source"],
+                    "text": parse_result.text_content[:3000],
+                    "score": candidate["score"],
+                })
+        except Exception:
+            continue
+    
+    return results
 
 
 async def _generate_response(prompt: str) -> str:

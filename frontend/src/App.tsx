@@ -134,12 +134,10 @@ function AppContent() {
                 onClick={() => setSelectedProjectId(null)}
                 className="flex items-center gap-3 hover:opacity-80 transition"
               >
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-sm">
-                  <DocumentIcon />
-                </div>
+                <img src="/olilogo.png" alt="OLI" className="w-10 h-10 rounded-xl object-contain" />
                 <div>
                   <h1 className="text-lg font-semibold text-stone-900">OLILab</h1>
-                  <p className="text-xs text-stone-500">Project Documents & RFI Management</p>
+                  <p className="text-xs text-stone-500">Design Research Workshop</p>
                 </div>
               </button>
             </div>
@@ -370,7 +368,7 @@ function ProjectCard({
       <div className="flex flex-wrap gap-2">
         {project.rfi_count > 0 && <Badge variant="rfi">{project.rfi_count} RFIs</Badge>}
         {(project.submittal_count || 0) > 0 && <Badge variant="submittal">{project.submittal_count} Submittals</Badge>}
-        {project.spec_count > 0 && <Badge variant="spec">{project.spec_count} Specs</Badge>}
+        {project.spec_count > 0 && <Badge variant="spec">{project.spec_count} Knowledge</Badge>}
         {totalDocs === 0 && project.spec_count === 0 && (
           <span className="text-xs text-stone-400">No documents yet</span>
         )}

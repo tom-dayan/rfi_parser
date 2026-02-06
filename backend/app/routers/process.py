@@ -1038,6 +1038,54 @@ async def suggest_specs_from_file_paths(
                     "matched_terms": _get_matched_terms(spec["name"], search_terms)
                 })
         
+        # Boost must-include folders: files from these folders always appear in suggestions
+        # Accepts both folder names (e.g. "General") and full paths (e.g. "C:\Specs\General")
+        include_folders_list = project.include_folders or []
+        if include_folders_list:
+            include_folder_names = set()
+            include_full_paths = set()
+            for inc in include_folders_list:
+                inc_clean = inc.strip()
+                if not inc_clean:
+                    continue
+                inc_normalized = os.path.normpath(inc_clean).lower()
+                include_full_paths.add(inc_normalized)
+                folder_name = os.path.basename(inc_normalized)
+                if folder_name:
+                    include_folder_names.add(folder_name)
+            
+            def _file_in_include(file_spec):
+                """Check if a file is inside a must-include folder (by name or full path)."""
+                # Check by relative path folder names
+                rel_dir = os.path.dirname(file_spec["relative_path"]).replace("\\", "/").lower()
+                rel_parts = set(rel_dir.split("/")) if rel_dir else set()
+                if rel_parts & include_folder_names:
+                    return True
+                # Check by full directory path
+                full_dir = os.path.normpath(os.path.dirname(file_spec["path"])).lower()
+                for inc_path in include_full_paths:
+                    if full_dir == inc_path or full_dir.startswith(inc_path + os.sep):
+                        return True
+                return False
+            
+            if include_folder_names or include_full_paths:
+                # Boost scores for files in must-include folders
+                for scored in scored_specs:
+                    if _file_in_include(scored):
+                        scored["relevance_score"] = max(scored["relevance_score"], 50) + 100
+                
+                # Also add any un-scored files from must-include folders
+                scored_paths = {s["path"] for s in scored_specs}
+                for spec in spec_files:
+                    if spec["path"] in scored_paths:
+                        continue
+                    if _file_in_include(spec):
+                        scored_specs.append({
+                            **spec,
+                            "relevance_score": 100,
+                            "matched_terms": ["must-include folder"]
+                        })
+        
         # Sort by score and take top suggestions
         scored_specs.sort(key=lambda x: x["relevance_score"], reverse=True)
         top_specs = scored_specs[:15]  # Top 15 suggestions
@@ -1231,6 +1279,120 @@ def get_spec_folder_tree(
         "data": result,
         "timestamp": time.time(),
         "specs_folder": specs_folder,
+    }
+    
+    return result
+
+
+# In-memory cache for project folder trees
+_project_tree_cache: dict = {}
+_PROJECT_TREE_CACHE_TTL = 300  # 5 minutes
+
+
+@router.get("/projects/{project_id}/project-folder-tree")
+def get_project_folder_tree(
+    project_id: int,
+    refresh: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the combined folder tree of both RFI and knowledge folders.
+    Returns all files organized by source folder and subfolder for tree navigation.
+    
+    Cached in memory for 5 minutes. Pass ?refresh=true for a fresh scan.
+    Sync def so FastAPI runs it in a threadpool automatically.
+    """
+    import os
+    import time
+    
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Check cache
+    now = time.time()
+    cached = _project_tree_cache.get(project_id)
+    if (
+        not refresh
+        and cached
+        and (now - cached["timestamp"]) < _PROJECT_TREE_CACHE_TTL
+    ):
+        return cached["data"]
+    
+    start_time = time.time()
+    
+    doc_extensions = {'.pdf', '.docx', '.doc', '.txt', '.xlsx', '.xls', '.dwg', '.dxf', '.png', '.jpg', '.jpeg'}
+    
+    def walk_folder(folder_path: str, label: str):
+        """Walk a folder and return files with metadata."""
+        files = []
+        folders = set()
+        
+        if not folder_path or not os.path.exists(folder_path):
+            return files, sorted(list(folders))
+        
+        for root, dirs, filenames in os.walk(folder_path):
+            # Skip hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            
+            rel_root = os.path.relpath(root, folder_path)
+            if rel_root == ".":
+                rel_root = ""
+            else:
+                rel_root = rel_root.replace("\\", "/")
+            
+            if rel_root:
+                folders.add(rel_root)
+            
+            try:
+                with os.scandir(root) as entries:
+                    for entry in entries:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        ext = os.path.splitext(entry.name)[1].lower()
+                        if ext not in doc_extensions:
+                            continue
+                        try:
+                            file_size = entry.stat(follow_symlinks=False).st_size
+                        except OSError:
+                            file_size = 0
+                        
+                        relative_path = os.path.relpath(entry.path, folder_path).replace("\\", "/")
+                        
+                        files.append({
+                            "name": entry.name,
+                            "path": entry.path,
+                            "relative_path": relative_path,
+                            "folder": rel_root,
+                            "extension": ext,
+                            "size": file_size,
+                            "source": label,
+                        })
+            except OSError:
+                continue
+        
+        return files, sorted(list(folders))
+    
+    rfi_files, rfi_folders = walk_folder(project.rfi_folder_path, "RFI / Submittals")
+    spec_files, spec_folders = walk_folder(project.specs_folder_path, "Project Knowledge")
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Project folder tree: {len(rfi_files)} RFI + {len(spec_files)} knowledge files in {elapsed:.2f}s")
+    
+    result = {
+        "rfi_folder": project.rfi_folder_path,
+        "specs_folder": project.specs_folder_path,
+        "rfi_files": rfi_files,
+        "rfi_folders": rfi_folders,
+        "spec_files": spec_files,
+        "spec_folders": spec_folders,
+        "total_files": len(rfi_files) + len(spec_files),
+    }
+    
+    # Store in cache
+    _project_tree_cache[project_id] = {
+        "data": result,
+        "timestamp": time.time(),
     }
     
     return result
