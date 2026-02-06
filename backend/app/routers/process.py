@@ -767,25 +767,31 @@ async def suggest_specs_from_file_paths(
     # Get exclude folders list and normalize them
     exclude_folders = project.exclude_folders or []
     
-    # Extract folder names from full paths and normalize
+    # Build normalized exclusion sets
     exclude_folder_names = set()
     exclude_full_paths = set()
     for excl in exclude_folders:
-        excl_normalized = excl.strip().replace('/', '\\').lower()
-        if excl_normalized:
-            # Add the full path for exact matching
-            exclude_full_paths.add(excl_normalized)
-            # Also extract just the folder name (last component)
-            folder_name = os.path.basename(excl_normalized)
-            if folder_name:
-                exclude_folder_names.add(folder_name)
+        excl_clean = excl.strip()
+        if not excl_clean:
+            continue
+        # Normalize path separators to OS native
+        excl_normalized = os.path.normpath(excl_clean).lower()
+        # Add the full normalized path
+        exclude_full_paths.add(excl_normalized)
+        # Also extract just the folder name (last component) for name-based matching
+        folder_name = os.path.basename(excl_normalized)
+        if folder_name:
+            exclude_folder_names.add(folder_name)
+    
+    logger.info(f"Exclude folder names: {exclude_folder_names}")
+    logger.info(f"Exclude full paths: {exclude_full_paths}")
     
     # Collect all spec files, respecting exclude_folders
     spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     spec_files = []
     
     for root, dirs, files in os.walk(specs_folder):
-        root_normalized = root.replace('/', '\\').lower()
+        root_normalized = os.path.normpath(root).lower()
         
         # Filter out excluded directories by name or if their full path matches
         def should_include_dir(d):
@@ -793,9 +799,9 @@ async def suggest_specs_from_file_paths(
             if d_lower in exclude_folder_names:
                 return False
             # Check if the full path of this dir matches any exclude path
-            full_dir_path = os.path.join(root, d).replace('/', '\\').lower()
+            full_dir_path = os.path.normpath(os.path.join(root, d)).lower()
             for excl_path in exclude_full_paths:
-                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + '\\'):
+                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + os.sep):
                     return False
             return True
         
@@ -804,7 +810,7 @@ async def suggest_specs_from_file_paths(
         # Check if current root should be skipped
         skip_this = False
         for excl_path in exclude_full_paths:
-            if root_normalized == excl_path or root_normalized.startswith(excl_path + '\\'):
+            if root_normalized == excl_path or root_normalized.startswith(excl_path + os.sep):
                 skip_this = True
                 break
         if skip_this:
@@ -942,32 +948,33 @@ async def get_spec_folder_tree(
     # Get exclude folders and normalize them
     exclude_folders = project.exclude_folders or []
     
-    # Extract folder names from full paths and normalize
     exclude_folder_names = set()
     exclude_full_paths = set()
     for excl in exclude_folders:
-        excl_normalized = excl.strip().replace('/', '\\').lower()
-        if excl_normalized:
-            exclude_full_paths.add(excl_normalized)
-            folder_name = os.path.basename(excl_normalized)
-            if folder_name:
-                exclude_folder_names.add(folder_name)
+        excl_clean = excl.strip()
+        if not excl_clean:
+            continue
+        excl_normalized = os.path.normpath(excl_clean).lower()
+        exclude_full_paths.add(excl_normalized)
+        folder_name = os.path.basename(excl_normalized)
+        if folder_name:
+            exclude_folder_names.add(folder_name)
     
     spec_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     all_files = []
     folders_set = set()
     
     for root, dirs, files in os.walk(specs_folder):
-        root_normalized = root.replace('/', '\\').lower()
+        root_normalized = os.path.normpath(root).lower()
         
         # Filter out excluded directories by name or full path
         def should_include_dir(d):
             d_lower = d.lower()
             if d_lower in exclude_folder_names:
                 return False
-            full_dir_path = os.path.join(root, d).replace('/', '\\').lower()
+            full_dir_path = os.path.normpath(os.path.join(root, d)).lower()
             for excl_path in exclude_full_paths:
-                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + '\\'):
+                if full_dir_path == excl_path or full_dir_path.startswith(excl_path + os.sep):
                     return False
             return True
         
@@ -980,7 +987,7 @@ async def get_spec_folder_tree(
         # Check if current root should be skipped
         skip_this = False
         for excl_path in exclude_full_paths:
-            if root_normalized == excl_path or root_normalized.startswith(excl_path + '\\'):
+            if root_normalized == excl_path or root_normalized.startswith(excl_path + os.sep):
                 skip_this = True
                 break
         if skip_this:
@@ -1095,33 +1102,32 @@ async def smart_analyze_from_paths(
         # Generate response using AI
         if ai_service:
             try:
-                # Build context from specs
-                context = "\n\n---\n\n".join([
-                    f"SPECIFICATION: {s['name']}\n{s['content'][:20000]}"
-                    for s in spec_contents
-                ])
-                
-                prompt = f"""You are an expert architectural consultant helping respond to an RFI (Request for Information).
-
-RFI DOCUMENT: {rfi_name}
-{rfi_content[:30000]}
-
-RELEVANT SPECIFICATIONS:
-{context[:50000]}
-
-Based on the RFI content and the relevant specifications provided, draft a professional response that:
-1. Directly addresses the questions raised in the RFI
-2. References specific sections from the specifications when applicable
-3. Provides clear, actionable guidance
-4. Maintains a professional tone appropriate for construction documentation
-
-RESPONSE:"""
-                
-                response = ai_service.generate_response(prompt, context="")
-                
                 # Determine document type from filename
                 name_lower = rfi_name.lower()
                 doc_type = "submittal" if "submittal" in name_lower else "rfi"
+                
+                # Build spec context in the format the AI service expects
+                spec_context = [
+                    {
+                        "text": s["content"][:20000],
+                        "source": s["name"],
+                        "section": s["name"],
+                        "score": 1.0,
+                    }
+                    for s in spec_contents
+                ]
+                
+                # Use the proper process_document method (async)
+                doc_response = await ai_service.process_document(
+                    document_content=rfi_content[:30000],
+                    document_type=doc_type,
+                    spec_context=spec_context
+                )
+                
+                response_text = doc_response.response_text
+                confidence = doc_response.confidence
+                consultant_type = doc_response.consultant_type
+                status = doc_response.status if doc_type == "submittal" else None
                 
                 # Store the result in the database
                 result_record = ProcessingResult(
@@ -1130,8 +1136,10 @@ RESPONSE:"""
                     source_filename=rfi_name,
                     source_file_path=rfi_path,
                     document_type=doc_type,
-                    response_text=response,
-                    confidence=0.8,
+                    response_text=response_text,
+                    status=status,
+                    consultant_type=consultant_type,
+                    confidence=confidence,
                     spec_references=[
                         {"source_filename": s["name"], "text": "", "score": 1.0}
                         for s in spec_contents
@@ -1143,11 +1151,12 @@ RESPONSE:"""
                 results.append({
                     "rfi_path": rfi_path,
                     "rfi_name": rfi_name,
-                    "response": response,
+                    "response": response_text,
                     "specs_used": [s["name"] for s in spec_contents],
                     "result_id": result_record.id
                 })
             except Exception as e:
+                logger.error(f"Smart Analysis error for {rfi_name}: {e}", exc_info=True)
                 results.append({
                     "rfi_path": rfi_path,
                     "rfi_name": rfi_name,
